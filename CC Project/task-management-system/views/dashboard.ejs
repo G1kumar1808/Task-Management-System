@@ -1,0 +1,56 @@
+<%- include('partials/header', { title: title, user: user }) %>
+
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <h1>Welcome to Your Dashboard, <%= user.username %>! 🎉</h1>
+        <p class="welcome-message">You have successfully logged into the Task Management System</p>
+    </div>
+
+    <div class="dashboard-content">
+        <div class="user-info-card">
+            <h3>Your Profile Information</h3>
+            <div class="user-details">
+                <div class="detail-item">
+                    <strong>User ID:</strong>
+                    <span><%= user.userId %></span>
+                </div>
+                <div class="detail-item">
+                    <strong>Username:</strong>
+                    <span><%= user.username %></span>
+                </div>
+                <div class="detail-item">
+                    <strong>Email:</strong>
+                    <span><%= user.email %></span>
+                </div>
+                <div class="detail-item">
+                    <strong>Role:</strong>
+                    <span class="role-badge"><%= user.role %></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="quick-actions">
+            <h3>Quick Actions</h3>
+            <div class="action-buttons">
+                <button class="btn btn-primary" disabled>View Tasks (Coming Soon)</button>
+                <button class="btn btn-secondary" disabled>Create Task (Coming Soon)</button>
+                <button class="btn btn-outline" disabled>Team Collaboration (Coming Soon)</button>
+            </div>
+        </div>
+
+        <div class="system-info">
+            <h3>System Features</h3>
+            <ul class="features-list">
+                <li>✅ Secure AWS Serverless Backend</li>
+                <li>✅ JWT Authentication</li>
+                <li>✅ Role-Based Access Control</li>
+                <li>🔜 Task Management</li>
+                <li>🔜 File Uploads</li>
+                <li>🔜 Real-time Collaboration</li>
+                <li>🔜 Predictive Scaling</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<%- include('partials/footer') %>

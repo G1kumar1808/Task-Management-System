@@ -1,0 +1,25 @@
+<%- include('partials/header', { title: title, user: user }) %>
+
+<div class="error-container">
+    <div class="error-card">
+        <div class="error-icon">
+            <h1>⚠️</h1>
+        </div>
+        <h2><%= title %></h2>
+        <p class="error-message"><%= message %></p>
+        
+        <% if (error && error.message && Object.keys(error).length > 0) { %>
+            <div class="error-details">
+                <h4>Error Details:</h4>
+                <pre><%= error.message %></pre>
+            </div>
+        <% } %>
+        
+        <div class="error-actions">
+            <a href="/" class="btn btn-primary">Go Home</a>
+            <a href="javascript:history.back()" class="btn btn-secondary">Go Back</a>
+        </div>
+    </div>
+</div>
+
+<%- include('partials/footer') %>

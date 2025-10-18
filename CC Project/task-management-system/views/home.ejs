@@ -1,0 +1,36 @@
+<%- include('partials/header', { title: title, user: user }) %>
+
+<div class="hero-section">
+    <div class="container">
+        <div class="hero-content">
+            <h1>Secure Task Management System</h1>
+            <p class="hero-subtitle">Collaborate efficiently with your team using our AWS-powered serverless platform</p>
+            
+            <div class="hero-features">
+                <div class="feature">
+                    <h3>🚀 Serverless Architecture</h3>
+                    <p>Built on AWS Lambda for automatic scaling</p>
+                </div>
+                <div class="feature">
+                    <h3>🔒 Secure Authentication</h3>
+                    <p>JWT-based security with role-based access</p>
+                </div>
+                <div class="feature">
+                    <h3>📊 Real-time Collaboration</h3>
+                    <p>Manage tasks and collaborate with your team</p>
+                </div>
+            </div>
+
+            <div class="hero-actions">
+                <% if (!user) { %>
+                    <a href="/register" class="btn btn-primary">Get Started</a>
+                    <a href="/login" class="btn btn-secondary">Login</a>
+                <% } else { %>
+                    <a href="/dashboard" class="btn btn-primary">Go to Dashboard</a>
+                <% } %>
+            </div>
+        </div>
+    </div>
+</div>
+
+<%- include('partials/footer') %>

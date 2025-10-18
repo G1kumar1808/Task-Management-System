@@ -1,0 +1,60 @@
+<%- include('partials/header', { title: title, user: user }) %>
+
+<div class="auth-container">
+    <div class="auth-card">
+        <h2>Create Your Account</h2>
+        
+        <% if (error) { %>
+            <div class="alert alert-error">
+                <%= error %>
+            </div>
+        <% } %>
+
+        <form action="/auth/register" method="POST" class="auth-form">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input 
+                    type="text" 
+                    id="username" 
+                    name="username" 
+                    value="<%= formData ? formData.username : '' %>"
+                    required 
+                    class="form-control"
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="email">Email Address</label>
+                <input 
+                    type="email" 
+                    id="email" 
+                    name="email" 
+                    value="<%= formData ? formData.email : '' %>"
+                    required 
+                    class="form-control"
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    required 
+                    class="form-control"
+                    minlength="6"
+                >
+                <small>Password must be at least 6 characters long</small>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-full">Register</button>
+        </form>
+
+        <div class="auth-links">
+            <p>Already have an account? <a href="/login">Login here</a></p>
+        </div>
+    </div>
+</div>
+
+<%- include('partials/footer') %>
