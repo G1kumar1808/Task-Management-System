@@ -1,0 +1,10 @@
+{
+  "name": "task-management-system",
+  "version": "1.0.0",
+  "dependencies": {
+    "aws-sdk": "^2.1593.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "uuid": "^9.0.1"
+  }
+}
