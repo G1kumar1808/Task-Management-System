@@ -9,16 +9,14 @@
     <ul>
         <% tasks.forEach(task => { %>
         <li>
-            <h3><%= task.name %></h3>
+            <h3><a href="/task/<%= task.id %>"><%= task.name %></a></h3>
             <p><%= task.description %></p>
             <p>Assigned to: <%= (task.assignedTo || []).join(', ') %></p>
             <p>Created at: <%= task.createdAt %></p>
             <% if (task.downloadUrl) { %>
-            <p>Attachment: <a href="<%= task.downloadUrl %>"
-                    target="_blank">Download</a></p>
+            <p>Attachment: <a href="<%= task.downloadUrl %>" target="_blank">Download</a></p>
             <% } else if (task.fileUrl) { %>
-            <p>Attachment: <a href="<%= task.fileUrl %>"
-                    target="_blank">Download</a></p>
+            <p>Attachment: <a href="<%= task.fileUrl %>" target="_blank">Download</a></p>
             <% } %>
         </li>
         <% }) %>

@@ -21,13 +21,13 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
 }
 
 const s3 = new AWS.S3();
+const dynamodb = new AWS.DynamoDB.DocumentClient();
 
 // Create task endpoint (expects fileKey if file uploaded via presigned URL)
 router.post("/create-task", async (req, res) => {
   if (!req.session.user) return res.redirect("/login");
 
   const { taskName, taskDescription } = req.body;
-  // assignedUsers may be CSV or array
   let assignedUsers = req.body.assignedUsers || [];
   if (typeof assignedUsers === "string") {
     assignedUsers = assignedUsers
@@ -36,34 +36,31 @@ router.post("/create-task", async (req, res) => {
       .filter(Boolean);
   }
 
-  // If client performed presigned upload, it should send fileKey (S3 object key).
   let fileUrl = null;
   try {
     if (req.body.fileKey) {
-      // build object URL (may be private; consider presigned GET instead)
-      fileUrl = `https://${S3_BUCKET}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${encodeURIComponent(req.body.fileKey)}`;
+      fileUrl = `https://${S3_BUCKET}.s3.${
+        process.env.AWS_REGION || "us-east-1"
+      }.amazonaws.com/${encodeURIComponent(req.body.fileKey)}`;
     }
 
-      const newTask = {
-        id: `t_${Date.now()}`,
-        name: taskName,
-        description: taskDescription,
-        // session stores userId as userId (routes/auth sets userId from UserID)
-        createdBy: req.session.user?.userId || req.session.user?.userID || null,
-        assignedTo: assignedUsers,
-        fileKey: req.body.fileKey || null,
-        fileUrl: fileUrl || null,
-        createdAt: new Date().toISOString(),
-      };
+    const newTask = {
+      id: `t_${Date.now()}`,
+      name: taskName,
+      description: taskDescription,
+      createdBy: req.session.user?.userId || req.session.user?.userID || null,
+      assignedTo: assignedUsers,
+      fileKey: req.body.fileKey || null,
+      fileUrl: fileUrl || null,
+      createdAt: new Date().toISOString(),
+    };
 
-      // store locally and optionally forward to backend API
-      try {
-        await addTask(newTask);
-      } catch (err) {
-        console.error('Error saving task to store:', err);
-      }
+    try {
+      await addTask(newTask);
+    } catch (err) {
+      console.error("Error saving task to store:", err);
+    }
 
-    // Optionally forward to AWS API if configured. Map fields to backend expected shape.
     if (AWS_API_URL) {
       const payload = {
         TaskID: newTask.id,
@@ -81,9 +78,11 @@ router.post("/create-task", async (req, res) => {
         });
       } catch (err) {
         if (err.response && err.response.status === 403) {
-          console.warn('Failed to forward task to AWS API: 403 Forbidden - token or permissions issue');
+          console.warn(
+            "Failed to forward task to AWS API: 403 Forbidden - token or permissions issue"
+          );
         } else {
-          console.warn('Failed to forward task to AWS API:', err.message);
+          console.warn("Failed to forward task to AWS API:", err.message);
         }
       }
     }
@@ -105,41 +104,39 @@ router.get("/view-tasks", (req, res) => {
   if (!req.session.user) return res.redirect("/login");
   (async () => {
     try {
-      // Fetch tasks from local store first
       let tasks = await getTasks();
 
-      // If there's a backend API configured, try to fetch authoritative tasks
       if (AWS_API_URL) {
         try {
           const resp = await axios.get(`${AWS_API_URL}/tasks`, {
-            headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+            headers: {
+              Authorization: `Bearer ${req.session.user?.token || ""}`,
+            },
           });
           if (resp.data && Array.isArray(resp.data.tasks)) {
-            // map backend tasks to internal shape
             const backend = resp.data.tasks.map((it) => ({
               id: it.TaskID || it.id || it.taskId,
               name: it.Name || it.name || it.taskName,
-              description: it.Description || it.description || it.taskDescription,
+              description:
+                it.Description || it.description || it.taskDescription,
               createdBy: it.CreatedBy || it.createdBy,
               assignedTo: it.AssignedTo || it.assignedTo || [],
               fileKey: it.FileKey || it.fileKey || null,
               fileUrl: it.FileUrl || it.fileUrl || null,
               createdAt: it.CreatedAt || it.createdAt,
             }));
-            // Prefer backend list (authoritative)
             tasks = backend;
           }
         } catch (err) {
-          // Log details for 403s and other errors
           if (err.response && err.response.status === 403) {
-            console.warn('AWS API returned 403 when fetching tasks - check API token/permissions');
+            console.warn(
+              "AWS API returned 403 when fetching tasks - check API token/permissions"
+            );
           } else {
-            console.warn('Failed to fetch tasks from AWS API:', err.message);
+            console.warn("Failed to fetch tasks from AWS API:", err.message);
           }
-          // fall back to local tasks array
         }
       }
-      // For tasks with fileKey, generate presigned download urls
       const tasksWithUrls = await Promise.all(
         tasks.map(async (t) => {
           if (t.fileKey && S3_BUCKET) {
@@ -163,12 +160,12 @@ router.get("/view-tasks", (req, res) => {
         })
       );
 
-      // Only show tasks created by or assigned to the logged-in user
       const uid = req.session.user?.userId || req.session.user?.userID || null;
       const visible = tasksWithUrls.filter((t) => {
         if (!uid) return false;
         if (t.createdBy && String(t.createdBy) === String(uid)) return true;
-        if ((t.assignedTo || []).some((a) => String(a) === String(uid))) return true;
+        if ((t.assignedTo || []).some((a) => String(a) === String(uid)))
+          return true;
         return false;
       });
 
@@ -188,7 +185,106 @@ router.get("/view-tasks", (req, res) => {
   })();
 });
 
-// Search users by email or username (simple proxied call to AWS API or dummy data)
+// Task detail page with comments
+router.get("/task/:taskId", async (req, res) => {
+  if (!req.session.user) return res.redirect("/login");
+
+  const taskId = req.params.taskId;
+  let task = (await getTasks()).find((t) => t.id === taskId);
+
+  if (!task) {
+    return res
+      .status(404)
+      .render("error", { title: "Not Found", message: "Task not found" });
+  }
+
+  // Fetch comments from CommentsTable
+  const comments = await dynamodb
+    .scan({
+      TableName: "CommentsTable",
+      FilterExpression: "TaskID = :taskId",
+      ExpressionAttributeValues: { ":taskId": taskId },
+    })
+    .promise()
+    .then((data) => data.Items || []);
+
+  // Generate presigned URLs for comment attachments if any
+  const commentsWithUrls = await Promise.all(
+    comments.map(async (comment) => {
+      if (comment.FileKey && S3_BUCKET) {
+        try {
+          const signedUrl = await s3.getSignedUrlPromise("getObject", {
+            Bucket: S3_BUCKET,
+            Key: comment.FileKey,
+            Expires: 60,
+          });
+          return { ...comment, FileUrl: signedUrl };
+        } catch (err) {
+          console.warn(
+            "Failed to sign comment attachment download for",
+            comment.FileKey,
+            err.message
+          );
+          return { ...comment, FileUrl: null };
+        }
+      }
+      return comment;
+    })
+  );
+
+  res.render("task-detail", {
+    title: task.name,
+    user: req.session.user || null,
+    task: task,
+    comments: commentsWithUrls,
+  });
+});
+
+// Add comment and file upload
+router.post("/add-comment", upload.single("attachment"), async (req, res) => {
+  if (!req.session.user) return res.redirect("/login");
+
+  const { taskId, commentText } = req.body;
+  const file = req.file;
+
+  let fileKey = null;
+  let fileUrl = null;
+
+  if (file) {
+    fileKey = `comments/${Date.now()}_${file.originalname}`;
+    const params = {
+      Bucket: S3_BUCKET,
+      Key: fileKey,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+    };
+    await s3.upload(params).promise();
+    fileUrl = `https://${S3_BUCKET}.s3.${
+      process.env.AWS_REGION || "us-east-1"
+    }.amazonaws.com/${encodeURIComponent(fileKey)}`;
+  }
+
+  const comment = {
+    CommentID: `c_${Date.now()}`,
+    TaskID: taskId,
+    UserID: req.session.user.userId,
+    CommentText: commentText,
+    FileKey: fileKey,
+    FileUrl: fileUrl,
+    CreatedAt: new Date().toISOString(),
+  };
+
+  await dynamodb
+    .put({
+      TableName: "CommentsTable",
+      Item: comment,
+    })
+    .promise();
+
+  res.redirect(`/task/${taskId}`);
+});
+
+// Search users by email or username
 router.get("/search-users", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ error: "Unauthorized" });
   const q = (req.query.q || "").toLowerCase();
@@ -209,7 +305,6 @@ router.get("/search-users", async (req, res) => {
     }
   }
 
-  // fallback dummy search
   const dummy = [
     { UserID: "u123", Username: "AliceSmith", Email: "alice@example.com" },
     { UserID: "u456", Username: "BobJohnson", Email: "bob@example.com" },
@@ -220,7 +315,7 @@ router.get("/search-users", async (req, res) => {
   res.json(filtered);
 });
 
-// Presign upload URL (PUT) for browser direct upload
+// Presign upload URL
 router.get("/presign-upload", async (req, res) => {
   const devBypass =
     process.env.NODE_ENV === "development" ||
@@ -259,7 +354,7 @@ router.get("/presign-upload", async (req, res) => {
   }
 });
 
-// Presign download URL (GET) if you need to expose temporary download links
+// Presign download URL
 router.get("/presign-download", async (req, res) => {
   const devBypass =
     process.env.NODE_ENV === "development" ||
