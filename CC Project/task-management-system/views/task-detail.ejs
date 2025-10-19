@@ -1,0 +1,42 @@
+<%- include('partials/header', { title: task.name, user: user }) %>
+
+<div class="container">
+    <h1><%= task.name %></h1>
+    <div class="task-details">
+        <p><strong>Description:</strong> <%= task.description %></p>
+        <p><strong>Assigned to:</strong> <%= (task.assignedTo || []).join(', ') %></p>
+        <p><strong>Created at:</strong> <%= task.createdAt %></p>
+        <% if (task.downloadUrl) { %>
+            <p><strong>Attachment:</strong> <a href="<%= task.downloadUrl %>" target="_blank">Download</a></p>
+        <% } else if (task.fileUrl) { %>
+            <p><strong>Attachment:</strong> <a href="<%= task.fileUrl %>" target="_blank">Download</a></p>
+        <% } %>
+    </div>
+
+    <h2>Comments</h2>
+    <% if (!comments || comments.length === 0) { %>
+        <p>No comments found.</p>
+    <% } else { %>
+        <ul>
+            <% comments.forEach(comment => { %>
+                <li>
+                    <p><%= comment.CommentText %></p>
+                    <p><small>By: <%= comment.UserID %> on <%= comment.CreatedAt %></small></p>
+                    <% if (comment.FileUrl) { %>
+                        <p>Attachment: <a href="<%= comment.FileUrl %>" target="_blank">Download</a></p>
+                    <% } %>
+                </li>
+            <% }) %>
+        </ul>
+    <% } %>
+
+    <h2>Add Comment</h2>
+    <form action="/add-comment" method="post" enctype="multipart/form-data">
+        <input type="hidden" name="taskId" value="<%= task.id %>">
+        <textarea name="commentText" rows="4" cols="50" placeholder="Enter your comment" required></textarea><br>
+        <input type="file" name="attachment" accept="*/*"><br>
+        <button type="submit">Submit Comment</button>
+    </form>
+</div>
+
+<%- include('partials/footer') %>

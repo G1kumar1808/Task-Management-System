@@ -21,6 +21,7 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
 }
 
 const s3 = new AWS.S3();
+const dynamodb = new AWS.DynamoDB.DocumentClient();
 
 // Create task endpoint (expects fileKey if file uploaded via presigned URL)
 router.post("/create-task", async (req, res) => {
@@ -227,6 +228,174 @@ router.get("/view-tasks", async (req, res) => {
       tasks: [],
     });
   }
+});
+
+// Task detail page with comments
+router.get("/task/:taskId", async (req, res) => {
+  if (!req.session.user) return res.redirect("/login");
+
+  const taskId = req.params.taskId;
+  
+  // Fetch tasks from both local store and backend API
+  let tasks = await getTasks();
+  
+  // If there's a backend API configured, try to fetch authoritative tasks
+  if (AWS_API_URL) {
+    try {
+      const resp = await axios.get(`${AWS_API_URL}/tasks`, {
+        headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+      });
+      if (resp.data && Array.isArray(resp.data.tasks)) {
+        const backend = resp.data.tasks.map((it) => ({
+          id: it.TaskID || it.id || it.taskId,
+          name: it.Name || it.name || it.taskName,
+          description: it.Description || it.description || it.taskDescription,
+          createdBy: it.CreatedBy || it.createdBy,
+          assignedTo: it.AssignedTo || it.assignedTo || [],
+          fileKey: it.FileKey || it.fileKey || null,
+          fileUrl: it.FileUrl || it.fileUrl || null,
+          createdAt: it.CreatedAt || it.createdAt,
+        }));
+        tasks = backend;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch tasks from AWS API for task detail:', err.message);
+    }
+  }
+
+  let task = tasks.find((t) => t.id === taskId);
+
+  if (!task) {
+    return res
+      .status(404)
+      .render("error", { 
+        title: "Not Found", 
+        message: "Task not found",
+        user: req.session.user || null 
+      });
+  }
+
+  // Fetch comments from CommentsTable
+  let comments = [];
+  try {
+    const commentsResult = await dynamodb
+      .scan({
+        TableName: "CommentsTable",
+        FilterExpression: "TaskID = :taskId",
+        ExpressionAttributeValues: { ":taskId": taskId },
+      })
+      .promise();
+    comments = commentsResult.Items || [];
+  } catch (err) {
+    console.warn('Could not fetch comments:', err.message);
+  }
+
+  // Fetch all users to map IDs to usernames for comments
+  let userMap = {};
+  if (AWS_API_URL) {
+    try {
+      const usersResponse = await axios.get(`${AWS_API_URL}/users`, {
+        headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+      });
+      if (usersResponse.data && usersResponse.data.users) {
+        usersResponse.data.users.forEach(user => {
+          userMap[user.UserID] = user.Username;
+        });
+      }
+    } catch (err) {
+      console.warn('Could not fetch users for comment mapping:', err.message);
+    }
+  }
+
+  // Map user IDs to usernames in comments
+  comments = comments.map(comment => {
+    if (comment.UserID && userMap[comment.UserID]) {
+      comment.Username = userMap[comment.UserID];
+    }
+    return comment;
+  });
+
+  // Generate presigned URLs for comment attachments if any
+  const commentsWithUrls = await Promise.all(
+    comments.map(async (comment) => {
+      if (comment.FileKey && S3_BUCKET) {
+        try {
+          const signedUrl = await s3.getSignedUrlPromise("getObject", {
+            Bucket: S3_BUCKET,
+            Key: comment.FileKey,
+            Expires: 60,
+          });
+          return { ...comment, FileUrl: signedUrl };
+        } catch (err) {
+          console.warn(
+            "Failed to sign comment attachment download for",
+            comment.FileKey,
+            err.message
+          );
+          return { ...comment, FileUrl: null };
+        }
+      }
+      return comment;
+    })
+  );
+
+  // Sort comments by creation date (newest first)
+  commentsWithUrls.sort((a, b) => {
+    const dateA = new Date(a.CreatedAt || 0);
+    const dateB = new Date(b.CreatedAt || 0);
+    return dateB - dateA;
+  });
+
+  res.render("task-detail", {
+    title: task.name,
+    user: req.session.user || null,
+    task: task,
+    comments: commentsWithUrls,
+  });
+});
+
+// Add comment and file upload
+router.post("/add-comment", upload.single("attachment"), async (req, res) => {
+  if (!req.session.user) return res.redirect("/login");
+
+  const { taskId, commentText } = req.body;
+  const file = req.file;
+
+  let fileKey = null;
+  let fileUrl = null;
+
+  if (file) {
+    fileKey = `comments/${Date.now()}_${file.originalname}`;
+    const params = {
+      Bucket: S3_BUCKET,
+      Key: fileKey,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+    };
+    await s3.upload(params).promise();
+    fileUrl = `https://${S3_BUCKET}.s3.${
+      process.env.AWS_REGION || "us-east-1"
+    }.amazonaws.com/${encodeURIComponent(fileKey)}`;
+  }
+
+  const comment = {
+    CommentID: `c_${Date.now()}`,
+    TaskID: taskId,
+    UserID: req.session.user.userId,
+    CommentText: commentText,
+    FileKey: fileKey,
+    FileUrl: fileUrl,
+    CreatedAt: new Date().toISOString(),
+  };
+
+  await dynamodb
+    .put({
+      TableName: "CommentsTable",
+      Item: comment,
+    })
+    .promise();
+
+  res.redirect(`/task/${taskId}`);
 });
 
 // Search users by email or username (simple proxied call to AWS API or dummy data)

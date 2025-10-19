@@ -13,7 +13,13 @@
                     <div class="task-card">
                         <div class="task-header">
                             <div>
-                                <h3 class="task-title"><%= task.name %></h3>
+                                <h3 class="task-title">
+                                    <% if (task.id) { %>
+                                        <a href="/task/<%= task.id %>" class="task-link"><%= task.name %></a>
+                                    <% } else { %>
+                                        <%= task.name %>
+                                    <% } %>
+                                </h3>
                                 <div class="task-meta">
                                     <div class="task-meta-item">
                                         <span>📅</span>
@@ -38,14 +44,15 @@
                         </div>
                         
                         <% if (task.assignedTo && task.assignedTo.length) { %>
-                            <div>
+                            <div class="task-assignment-section">
                                 <strong>Assigned to:</strong>
                                 <div class="task-assignees">
-                                    <% task.assignedToUsernames && task.assignedToUsernames.forEach(username => { %>
-                                        <span class="assignee-badge"><%= username %></span>
-                                    <% }); %>
-                                    <!-- Fallback to IDs if usernames not available -->
-                                    <% if (!task.assignedToUsernames && task.assignedTo) { %>
+                                    <% if (task.assignedToUsernames && task.assignedToUsernames.length) { %>
+                                        <% task.assignedToUsernames.forEach(username => { %>
+                                            <span class="assignee-badge"><%= username %></span>
+                                        <% }); %>
+                                    <% } else if (task.assignedTo && task.assignedTo.length) { %>
+                                        <!-- Fallback to IDs if usernames not available -->
                                         <% task.assignedTo.forEach(userId => { %>
                                             <span class="assignee-badge"><%= userId %></span>
                                         <% }); %>
@@ -57,7 +64,22 @@
                         <div class="task-actions">
                             <% if (task.downloadUrl) { %>
                                 <a href="<%= task.downloadUrl %>" class="btn btn-outline" target="_blank">📎 Download Attachment</a>
+                            <% } else if (task.fileUrl) { %>
+                                <a href="<%= task.fileUrl %>" class="btn btn-outline" target="_blank">📎 Download Attachment</a>
                             <% } %>
+                            <% if (task.id) { %>
+                                <a href="/task/<%= task.id %>" class="btn btn-secondary">View Details</a>
+                            <% } %>
+                        </div>
+
+                        <!-- Additional task info (from second template) -->
+                        <div class="task-additional-info">
+                            <div class="task-id">
+                                <small>Task ID: <%= task.id %></small>
+                            </div>
+                            <div class="created-at">
+                                <small>Created: <%= new Date(task.createdAt).toLocaleString() %></small>
+                            </div>
                         </div>
                     </div>
                 <% }); %>
@@ -73,3 +95,90 @@
 </div>
 
 <%- include('partials/footer') %>
+
+<style>
+    .task-link {
+        color: var(--primary);
+        text-decoration: none;
+        transition: var(--transition);
+    }
+
+    .task-link:hover {
+        color: var(--primary-dark);
+        text-decoration: underline;
+    }
+
+    .task-assignment-section {
+        margin: 1.5rem 0;
+        padding: 1rem 0;
+        border-top: 1px solid var(--gray-light);
+        border-bottom: 1px solid var(--gray-light);
+    }
+
+    .task-assignment-section strong {
+        display: block;
+        margin-bottom: 0.8rem;
+        color: var(--dark);
+        font-weight: 600;
+    }
+
+    .task-assignees {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .assignee-badge {
+        background: var(--primary);
+        color: white;
+        padding: 0.4rem 0.8rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        display: inline-block;
+    }
+
+    .task-actions {
+        display: flex;
+        gap: 0.8rem;
+        margin-top: 1.5rem;
+        flex-wrap: wrap;
+    }
+
+    .task-actions .btn {
+        padding: 0.6rem 1.2rem;
+        font-size: 0.9rem;
+    }
+
+    .task-additional-info {
+        margin-top: 1.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--gray-light);
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .task-additional-info small {
+        color: var(--gray);
+        font-size: 0.8rem;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .task-actions {
+            flex-direction: column;
+        }
+
+        .task-actions .btn {
+            width: 100%;
+            text-align: center;
+        }
+
+        .task-additional-info {
+            flex-direction: column;
+            gap: 0.3rem;
+        }
+    }
+</style>
