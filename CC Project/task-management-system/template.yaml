@@ -1,8 +1,21 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: User Management System
 
 Resources:
+  # Tasks Table
+  TasksTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: TasksTable
+      AttributeDefinitions:
+        - AttributeName: TaskID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: TaskID
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
   # Users Table
   UsersTable:
     Type: AWS::DynamoDB::Table
@@ -81,6 +94,87 @@ Resources:
           Properties:
             Path: /users
             Method: get
+
+  # Presign Upload Function
+  PresignUploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: src/tasks/presignUpload.handler
+      Runtime: nodejs18.x
+      Timeout: 10
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref S3Bucket
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:PutObjectAcl
+              Resource: !Sub arn:aws:s3:::${S3Bucket}/*
+      Events:
+        PresignUploadApi:
+          Type: Api
+          Properties:
+            Path: /presign-upload
+            Method: get
+
+  # Presign Download Function
+  PresignDownloadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: src/tasks/presignDownload.handler
+      Runtime: nodejs18.x
+      Timeout: 10
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref S3Bucket
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub arn:aws:s3:::${S3Bucket}/*
+      Events:
+        PresignDownloadApi:
+          Type: Api
+          Properties:
+            Path: /presign-download
+            Method: get
+
+  # Create Task Function (stores in DynamoDB)
+  CreateTaskFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: src/tasks/createTask.handler
+      Runtime: nodejs18.x
+      Timeout: 15
+      Environment:
+        Variables:
+          TASKS_TABLE: !Ref TasksTable
+          S3_BUCKET: !Ref S3Bucket
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TasksTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub arn:aws:s3:::${S3Bucket}/*
+      Events:
+        CreateTaskApi:
+          Type: Api
+          Properties:
+            Path: /tasks
+            Method: post
+
+Parameters:
+  S3Bucket:
+    Type: String
+    Description: Existing S3 bucket name to use for uploads
 
 Outputs:
   ApiUrl:

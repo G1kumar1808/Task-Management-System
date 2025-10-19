@@ -1,49 +1,135 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create New Task</title>
-    <link rel="stylesheet" href="/css/style.css"> </head>
-<body>
-    <%- include('partials/header') %> <div class="container">
-        <h1>Create New Task</h1>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Create New Task</title>
+        <link rel="stylesheet" href="/css/style.css"> </head>
+    <body>
+        <%- include('partials/header', { title: title, user: user }) %>
 
-        <% if (typeof message !== 'undefined' && message) { %>
+        <div class="container">
+            <h1>Create New Task</h1>
+
+            <% if (typeof message !== 'undefined' && message) { %>
             <p style="color: red;"><%= message %></p>
-        <% } %>
+            <% } %>
 
-        <form action="/create-task" method="POST" enctype="multipart/form-data"> <div class="form-group">
-                <label for="taskName">Task Name:</label>
-                <input type="text" id="taskName" name="taskName" required>
-            </div>
+            <form id="createTaskForm" action="/create-task" method="POST">
+                <div class="form-group">
+                    <label for="taskName">Task Name:</label>
+                    <input type="text" id="taskName" name="taskName" required>
+                </div>
 
-            <div class="form-group">
-                <label for="taskDescription">Task Description:</label>
-                <textarea id="taskDescription" name="taskDescription" rows="5" required></textarea>
-            </div>
+                <div class="form-group">
+                    <label for="taskDescription">Task Description:</label>
+                    <textarea id="taskDescription" name="taskDescription"
+                        rows="5" required></textarea>
+                </div>
 
-            <div class="form-group">
-                <label for="fileAttached">Attach File (Optional):</label>
-                <input type="file" id="fileAttached" name="fileAttached">
-                <small> (File upload functionality needs separate implementation with Multer and S3) </small>
-            </div>
+                <div class="form-group">
+                    <label for="fileAttached">Attach File (Optional):</label>
+                    <input type="file" id="fileAttached" name="fileAttached">
+                </div>
 
-            <div class="form-group">
-                <label for="assignedUsers">Assign to Users:</label>
-                <select id="assignedUsers" name="assignedUsers" multiple>
-                    <% users.forEach(user => { %>
-                        <option value="<%= user.UserID %>"><%= user.Username %></option>
-                    <% }); %>
-                </select>
-                <small> Hold Ctrl/Cmd to select multiple users. </small>
-            </div>
+                <div class="form-group">
+                    <label for="userSearch">Search users to assign (email or
+                        username):</label>
+                    <input type="text" id="userSearch"
+                        placeholder="Search by email or username">
+                    <div id="searchResults"></div>
+                    <label for="assignedUsers">Assigned Users:</label>
+                    <select id="assignedUsers" name="assignedUsers" multiple>
+                        <% if (users && users.length) { %>
+                        <% users.forEach(user => { %>
+                        <option value="<%= user.UserID %>"><%= user.Username %>
+                            &lt;<%= user.Email || '' %>&gt;</option>
+                        <% }); %>
+                        <% } %>
+                    </select>
+                    <small> Hold Ctrl/Cmd to select multiple users. </small>
+                </div>
 
-            <button type="submit">Create Task</button>
-        </form>
-    </div>
+                <button type="submit">Create Task</button>
+            </form>
+        </div>
 
-    <%- include('partials/footer') %> </body>
+        <%- include('partials/footer') %>
+
+        <script>
+        const searchInput = document.getElementById('userSearch');
+        const resultsDiv = document.getElementById('searchResults');
+        const assignedSelect = document.getElementById('assignedUsers');
+            const form = document.getElementById('createTaskForm');
+            const fileInput = document.getElementById('fileAttached');
+
+        let timeout = null;
+        searchInput.addEventListener('input', () => {
+            clearTimeout(timeout);
+            const q = searchInput.value.trim();
+            if (!q) { resultsDiv.innerHTML = ''; return; }
+            timeout = setTimeout(async () => {
+                try {
+                    const res = await fetch(`/search-users?q=${encodeURIComponent(q)}`);
+                    if (!res.ok) return;
+                    const users = await res.json();
+                    resultsDiv.innerHTML = '';
+                    users.forEach(u => {
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.textContent = `${u.Username} <${u.Email || ''}>`;
+                        btn.addEventListener('click', () => {
+                            // add to select if not present
+                            const exists = Array.from(assignedSelect.options).some(o => o.value === u.UserID);
+                            if (!exists) {
+                                const opt = document.createElement('option');
+                                opt.value = u.UserID;
+                                opt.text = `${u.Username} <${u.Email || ''}>`;
+                                opt.selected = true;
+                                assignedSelect.appendChild(opt);
+                            }
+                        });
+                        resultsDiv.appendChild(btn);
+                    });
+                } catch (err) {
+                    console.error('User search failed', err);
+                }
+            }, 300);
+        });
+
+        // Handle presigned upload on form submit
+        form.addEventListener('submit', async (e) => {
+  if (!fileInput.files.length) return;
+  e.preventDefault();
+  const file = fileInput.files[0];
+  try {
+    console.log('File:', file.name, file.type);
+    const presignRes = await fetch(`/presign-upload?filename=${encodeURIComponent(file.name)}&contentType=${encodeURIComponent(file.type)}`);
+    console.log('Presign:', presignRes.status, presignRes.statusText);
+    if (!presignRes.ok) throw new Error(`Presign failed: ${presignRes.statusText}`);
+    const { url, key } = await presignRes.json();
+    console.log('Presigned URL:', url);
+    const uploadRes = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type },
+      body: file
+    });
+    console.log('Upload:', uploadRes.status, uploadRes.statusText);
+    if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.statusText}`);
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.name = 'fileKey';
+    hidden.value = key;
+    form.appendChild(hidden);
+    form.submit();
+  } catch (err) {
+    console.error('Error:', err.message);
+    alert('File upload failed. Check console for details.');
+  }
+});
+    </script>
+
+    </body>
 </html>
 
 <style>

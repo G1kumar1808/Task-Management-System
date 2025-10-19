@@ -1,0 +1,29 @@
+<%- include('partials/header', { title: title, user: user }) %>
+
+<div class="container">
+    <h1>Your Tasks</h1>
+
+    <% if (!tasks || tasks.length === 0) { %>
+    <p>No tasks found.</p>
+    <% } else { %>
+    <ul>
+        <% tasks.forEach(task => { %>
+        <li>
+            <h3><%= task.name %></h3>
+            <p><%= task.description %></p>
+            <p>Assigned to: <%= (task.assignedTo || []).join(', ') %></p>
+            <p>Created at: <%= task.createdAt %></p>
+            <% if (task.downloadUrl) { %>
+            <p>Attachment: <a href="<%= task.downloadUrl %>"
+                    target="_blank">Download</a></p>
+            <% } else if (task.fileUrl) { %>
+            <p>Attachment: <a href="<%= task.fileUrl %>"
+                    target="_blank">Download</a></p>
+            <% } %>
+        </li>
+        <% }) %>
+    </ul>
+    <% } %>
+</div>
+
+<%- include('partials/footer') %>
