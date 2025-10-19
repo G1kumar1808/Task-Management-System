@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><%= title %> - Task Management</title>
+    <title><%= title %> - Task Manager</title>
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -12,15 +12,36 @@
             <div class="nav-logo">
                 <a href="/">TaskManager</a>
             </div>
+            
             <div class="nav-menu">
                 <% if (user) { %>
-                    <a href="/dashboard" class="nav-link">Dashboard</a>
-                    <a href="/logout" class="nav-link">Logout (<%= user.username %>)</a>
+                    <a href="/dashboard" class="nav-link <%= title === 'Dashboard' ? 'active' : '' %>">
+                        📊 Dashboard
+                    </a>
+                    <a href="/create-task" class="nav-link <%= title === 'Create Task' ? 'active' : '' %>">
+                        ➕ Create Task
+                    </a>
+                    <a href="/view-tasks" class="nav-link <%= title === 'Your Tasks' ? 'active' : '' %>">
+                        📋 View Tasks
+                    </a>
+                    <div class="user-info">
+                        <div class="user-avatar">
+                            <%= user.username.charAt(0).toUpperCase() %>
+                        </div>
+                        <span><%= user.username %></span>
+                    </div>
+                    <a href="/logout" class="nav-link">🚪 Logout</a>
                 <% } else { %>
-                    <a href="/login" class="nav-link">Login</a>
-                    <a href="/register" class="nav-link">Register</a>
+                    <a href="/" class="nav-link <%= title === 'Task Management System' ? 'active' : '' %>">
+                        🏠 Home
+                    </a>
+                    <a href="/login" class="nav-link <%= title === 'Login' ? 'active' : '' %>">
+                        🔑 Login
+                    </a>
+                    <a href="/register" class="nav-link <%= title === 'Register' ? 'active' : '' %>">
+                        📝 Register
+                    </a>
                 <% } %>
             </div>
         </div>
     </nav>
-    <main class="main-content">

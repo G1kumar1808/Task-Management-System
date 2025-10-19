@@ -8,12 +8,8 @@
 
     <div class="dashboard-content">
         <div class="user-info-card">
-            <h3>Your Profile Information</h3>
+            <h3>👤 Your Profile Information</h3>
             <div class="user-details">
-                <div class="detail-item">
-                    <strong>User ID:</strong>
-                    <span><%= user.userId %></span>
-                </div>
                 <div class="detail-item">
                     <strong>Username:</strong>
                     <span><%= user.username %></span>
@@ -22,33 +18,16 @@
                     <strong>Email:</strong>
                     <span><%= user.email %></span>
                 </div>
-                <div class="detail-item">
-                    <strong>Role:</strong>
-                    <span class="role-badge"><%= user.role %></span>
-                </div>
             </div>
         </div>
 
         <div class="quick-actions">
-            <h3>Quick Actions</h3>
+            <h3>⚡ Quick Actions</h3>
             <div class="action-buttons">
-                <button class="btn btn-primary" disabled>View Tasks (Coming Soon)</button>
-                <a href="/create-task" class="btn btn-secondary">Create Task</a>
-                <button class="btn btn-outline" disabled>Team Collaboration (Coming Soon)</button>
+                <a href="/create-task" class="btn btn-primary">➕ Create Task</a>
+                <a href="/view-tasks" class="btn btn-secondary">📋 View Tasks</a>
+                <a href="/" class="btn btn-outline">🏠 Home</a>
             </div>
-        </div>
-
-        <div class="system-info">
-            <h3>System Features</h3>
-            <ul class="features-list">
-                <li>✅ Secure AWS Serverless Backend</li>
-                <li>✅ JWT Authentication</li>
-                <li>✅ Role-Based Access Control</li>
-                <li>🔜 Task Management</li>
-                <li>🔜 File Uploads</li>
-                <li>🔜 Real-time Collaboration</li>
-                <li>🔜 Predictive Scaling</li>
-            </ul>
         </div>
     </div>
 </div>

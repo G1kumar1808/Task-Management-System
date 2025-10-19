@@ -1,29 +1,75 @@
 <%- include('partials/header', { title: title, user: user }) %>
 
 <div class="container">
-    <h1>Your Tasks</h1>
+    <div class="tasks-container">
+        <div class="tasks-header">
+            <h1>📋 Your Tasks</h1>
+            <a href="/create-task" class="btn btn-primary">➕ Create New Task</a>
+        </div>
 
-    <% if (!tasks || tasks.length === 0) { %>
-    <p>No tasks found.</p>
-    <% } else { %>
-    <ul>
-        <% tasks.forEach(task => { %>
-        <li>
-            <h3><%= task.name %></h3>
-            <p><%= task.description %></p>
-            <p>Assigned to: <%= (task.assignedTo || []).join(', ') %></p>
-            <p>Created at: <%= task.createdAt %></p>
-            <% if (task.downloadUrl) { %>
-            <p>Attachment: <a href="<%= task.downloadUrl %>"
-                    target="_blank">Download</a></p>
-            <% } else if (task.fileUrl) { %>
-            <p>Attachment: <a href="<%= task.fileUrl %>"
-                    target="_blank">Download</a></p>
+        <div class="tasks-grid">
+            <% if (tasks && tasks.length) { %>
+                <% tasks.forEach(task => { %>
+                    <div class="task-card">
+                        <div class="task-header">
+                            <div>
+                                <h3 class="task-title"><%= task.name %></h3>
+                                <div class="task-meta">
+                                    <div class="task-meta-item">
+                                        <span>📅</span>
+                                        <span><%= new Date(task.createdAt).toLocaleDateString() %></span>
+                                    </div>
+                                    <div class="task-meta-item">
+                                        <span>👤</span>
+                                        <span>Created by: <%= task.createdByUsername || task.createdBy %></span>
+                                    </div>
+                                    <% if (task.fileKey || task.fileUrl) { %>
+                                        <div class="task-meta-item">
+                                            <span>📎</span>
+                                            <span>Has attachment</span>
+                                        </div>
+                                    <% } %>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="task-description">
+                            <%= task.description %>
+                        </div>
+                        
+                        <% if (task.assignedTo && task.assignedTo.length) { %>
+                            <div>
+                                <strong>Assigned to:</strong>
+                                <div class="task-assignees">
+                                    <% task.assignedToUsernames && task.assignedToUsernames.forEach(username => { %>
+                                        <span class="assignee-badge"><%= username %></span>
+                                    <% }); %>
+                                    <!-- Fallback to IDs if usernames not available -->
+                                    <% if (!task.assignedToUsernames && task.assignedTo) { %>
+                                        <% task.assignedTo.forEach(userId => { %>
+                                            <span class="assignee-badge"><%= userId %></span>
+                                        <% }); %>
+                                    <% } %>
+                                </div>
+                            </div>
+                        <% } %>
+                        
+                        <div class="task-actions">
+                            <% if (task.downloadUrl) { %>
+                                <a href="<%= task.downloadUrl %>" class="btn btn-outline" target="_blank">📎 Download Attachment</a>
+                            <% } %>
+                        </div>
+                    </div>
+                <% }); %>
+            <% } else { %>
+                <div class="task-card" style="text-align: center; padding: 3rem;">
+                    <h3 style="margin-bottom: 1rem;">No tasks found</h3>
+                    <p style="color: var(--gray); margin-bottom: 1.5rem;">You don't have any tasks assigned to you yet.</p>
+                    <a href="/create-task" class="btn btn-primary">Create Your First Task</a>
+                </div>
             <% } %>
-        </li>
-        <% }) %>
-    </ul>
-    <% } %>
+        </div>
+    </div>
 </div>
 
 <%- include('partials/footer') %>

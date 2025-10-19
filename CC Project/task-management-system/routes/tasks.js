@@ -101,124 +101,208 @@ router.post("/create-task", async (req, res) => {
 });
 
 // View tasks
-router.get("/view-tasks", (req, res) => {
+router.get("/view-tasks", async (req, res) => {
   if (!req.session.user) return res.redirect("/login");
-  (async () => {
-    try {
-      // Fetch tasks from local store first
-      let tasks = await getTasks();
+  
+  try {
+    // Fetch tasks from local store first
+    let tasks = await getTasks();
 
-      // If there's a backend API configured, try to fetch authoritative tasks
-      if (AWS_API_URL) {
-        try {
-          const resp = await axios.get(`${AWS_API_URL}/tasks`, {
-            headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
-          });
-          if (resp.data && Array.isArray(resp.data.tasks)) {
-            // map backend tasks to internal shape
-            const backend = resp.data.tasks.map((it) => ({
-              id: it.TaskID || it.id || it.taskId,
-              name: it.Name || it.name || it.taskName,
-              description: it.Description || it.description || it.taskDescription,
-              createdBy: it.CreatedBy || it.createdBy,
-              assignedTo: it.AssignedTo || it.assignedTo || [],
-              fileKey: it.FileKey || it.fileKey || null,
-              fileUrl: it.FileUrl || it.fileUrl || null,
-              createdAt: it.CreatedAt || it.createdAt,
-            }));
-            // Prefer backend list (authoritative)
-            tasks = backend;
-          }
-        } catch (err) {
-          // Log details for 403s and other errors
-          if (err.response && err.response.status === 403) {
-            console.warn('AWS API returned 403 when fetching tasks - check API token/permissions');
-          } else {
-            console.warn('Failed to fetch tasks from AWS API:', err.message);
-          }
-          // fall back to local tasks array
+    // If there's a backend API configured, try to fetch authoritative tasks
+    if (AWS_API_URL) {
+      try {
+        const resp = await axios.get(`${AWS_API_URL}/tasks`, {
+          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+        });
+        if (resp.data && Array.isArray(resp.data.tasks)) {
+          // map backend tasks to internal shape
+          const backend = resp.data.tasks.map((it) => ({
+            id: it.TaskID || it.id || it.taskId,
+            name: it.Name || it.name || it.taskName,
+            description: it.Description || it.description || it.taskDescription,
+            createdBy: it.CreatedBy || it.createdBy,
+            assignedTo: it.AssignedTo || it.assignedTo || [],
+            fileKey: it.FileKey || it.fileKey || null,
+            fileUrl: it.FileUrl || it.fileUrl || null,
+            createdAt: it.CreatedAt || it.createdAt,
+          }));
+          // Prefer backend list (authoritative)
+          tasks = backend;
         }
+      } catch (err) {
+        // Log details for 403s and other errors
+        if (err.response && err.response.status === 403) {
+          console.warn('AWS API returned 403 when fetching tasks - check API token/permissions');
+        } else {
+          console.warn('Failed to fetch tasks from AWS API:', err.message);
+        }
+        // fall back to local tasks array
       }
-      // For tasks with fileKey, generate presigned download urls
-      const tasksWithUrls = await Promise.all(
-        tasks.map(async (t) => {
-          if (t.fileKey && S3_BUCKET) {
-            try {
-              const signed = await s3.getSignedUrlPromise("getObject", {
-                Bucket: S3_BUCKET,
-                Key: t.fileKey,
-                Expires: 60,
-              });
-              return { ...t, downloadUrl: signed };
-            } catch (err) {
-              console.warn(
-                "Failed to sign download for",
-                t.fileKey,
-                err.message
-              );
-              return { ...t, downloadUrl: t.fileUrl };
-            }
-          }
-          return { ...t, downloadUrl: t.fileUrl };
-        })
-      );
-
-      // Only show tasks created by or assigned to the logged-in user
-      const uid = req.session.user?.userId || req.session.user?.userID || null;
-      const visible = tasksWithUrls.filter((t) => {
-        if (!uid) return false;
-        if (t.createdBy && String(t.createdBy) === String(uid)) return true;
-        if ((t.assignedTo || []).some((a) => String(a) === String(uid))) return true;
-        return false;
-      });
-
-      res.render("view-tasks", {
-        title: "Your Tasks",
-        user: req.session.user || null,
-        tasks: visible,
-      });
-    } catch (err) {
-      console.error("Error rendering tasks", err);
-      res.render("view-tasks", {
-        title: "Your Tasks",
-        user: req.session.user || null,
-        tasks: [],
-      });
     }
-  })();
+
+    // Fetch all users to map IDs to usernames
+    let userMap = {};
+    if (AWS_API_URL) {
+      try {
+        const usersResponse = await axios.get(`${AWS_API_URL}/users`, {
+          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+        });
+        if (usersResponse.data && usersResponse.data.users) {
+          usersResponse.data.users.forEach(user => {
+            userMap[user.UserID] = user.Username;
+          });
+        }
+      } catch (err) {
+        console.warn('Could not fetch users for mapping:', err.message);
+      }
+    }
+
+    // Map user IDs to usernames in tasks
+    tasks = tasks.map(task => {
+      // Map createdBy ID to username
+      if (task.createdBy && userMap[task.createdBy]) {
+        task.createdByUsername = userMap[task.createdBy];
+      }
+      
+      // Map assignedTo IDs to usernames
+      if (task.assignedTo && Array.isArray(task.assignedTo)) {
+        task.assignedToUsernames = task.assignedTo.map(userId => 
+          userMap[userId] || userId
+        );
+      }
+      
+      return task;
+    });
+
+    // Sort tasks by createdAt date (newest first)
+    tasks.sort((a, b) => {
+      const dateA = new Date(a.createdAt || 0);
+      const dateB = new Date(b.createdAt || 0);
+      return dateB - dateA; // Descending order (newest first)
+    });
+
+    // For tasks with fileKey, generate presigned download urls
+    const tasksWithUrls = await Promise.all(
+      tasks.map(async (t) => {
+        if (t.fileKey && S3_BUCKET) {
+          try {
+            const signed = await s3.getSignedUrlPromise("getObject", {
+              Bucket: S3_BUCKET,
+              Key: t.fileKey,
+              Expires: 60,
+            });
+            return { ...t, downloadUrl: signed };
+          } catch (err) {
+            console.warn(
+              "Failed to sign download for",
+              t.fileKey,
+              err.message
+            );
+            return { ...t, downloadUrl: t.fileUrl };
+          }
+        }
+        return { ...t, downloadUrl: t.fileUrl };
+      })
+    );
+
+    // Only show tasks created by or assigned to the logged-in user
+    const uid = req.session.user?.userId || req.session.user?.userID || null;
+    const visible = tasksWithUrls.filter((t) => {
+      if (!uid) return false;
+      if (t.createdBy && String(t.createdBy) === String(uid)) return true;
+      if ((t.assignedTo || []).some((a) => String(a) === String(uid))) return true;
+      return false;
+    });
+
+    res.render("view-tasks", {
+      title: "Your Tasks",
+      user: req.session.user || null,
+      tasks: visible,
+    });
+  } catch (err) {
+    console.error("Error rendering tasks", err);
+    res.render("view-tasks", {
+      title: "Your Tasks",
+      user: req.session.user || null,
+      tasks: [],
+    });
+  }
 });
 
 // Search users by email or username (simple proxied call to AWS API or dummy data)
 router.get("/search-users", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ error: "Unauthorized" });
   const q = (req.query.q || "").toLowerCase();
-  if (!q) return res.json([]);
+
+  console.log('Search users query:', q);
 
   if (AWS_API_URL) {
     try {
-      const resp = await axios.get(
-        `${AWS_API_URL}/users/search?q=${encodeURIComponent(q)}`,
-        {
+      let users = [];
+      
+      // Always try to get all users first from the /users endpoint
+      try {
+        const allUsersResp = await axios.get(`${AWS_API_URL}/users`, {
           headers: { Authorization: `Bearer ${req.session.user?.token || ""}` },
+        });
+        if (allUsersResp.data && allUsersResp.data.users) {
+          users = allUsersResp.data.users;
         }
-      );
-      return res.json(resp.data.users || []);
+      } catch (err) {
+        console.warn('Failed to get all users from API, trying search endpoint:', err.message);
+        // If /users endpoint fails, try the search endpoint
+        const searchResp = await axios.get(`${AWS_API_URL}/users/search?q=${encodeURIComponent(q)}`, {
+          headers: { Authorization: `Bearer ${req.session.user?.token || ""}` },
+        });
+        if (searchResp.data && searchResp.data.users) {
+          users = searchResp.data.users;
+        }
+      }
+
+      // Filter users if there's a search query
+      if (q && users.length > 0) {
+        users = users.filter(user => 
+          user.Username.toLowerCase().includes(q) || 
+          (user.Email && user.Email.toLowerCase().includes(q))
+        );
+      }
+
+      console.log('Returning users:', users.length);
+      return res.json(users);
     } catch (err) {
       console.warn("User search via API failed:", err.message);
-      return res.json([]);
+      // Fallback to dummy data
+      return getDummyUsers(q, res);
     }
   }
 
-  // fallback dummy search
+  // Fallback to dummy data if no AWS_API_URL
+  getDummyUsers(q, res);
+});
+
+// Helper function for dummy users
+function getDummyUsers(q, res) {
   const dummy = [
     { UserID: "u123", Username: "AliceSmith", Email: "alice@example.com" },
     { UserID: "u456", Username: "BobJohnson", Email: "bob@example.com" },
+    { UserID: "u789", Username: "CharlieBrown", Email: "charlie@example.com" },
+    { UserID: "u101", Username: "DianaPrince", Email: "diana@example.com" },
+    { UserID: "u112", Username: "EthanHunt", Email: "ethan@example.com" },
   ];
-  const filtered = dummy.filter((u) =>
-    (u.Username + u.Email).toLowerCase().includes(q)
-  );
-  res.json(filtered);
-});
+  
+  let users = dummy;
+  
+  // Filter if there's a query
+  if (q) {
+    users = dummy.filter((u) =>
+      u.Username.toLowerCase().includes(q) || 
+      u.Email.toLowerCase().includes(q)
+    );
+  }
+  
+  console.log('Returning dummy users:', users.length);
+  res.json(users);
+}
 
 // Presign upload URL (PUT) for browser direct upload
 router.get("/presign-upload", async (req, res) => {
