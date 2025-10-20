@@ -16,13 +16,13 @@
             <div class="nav-menu">
                 <% if (user) { %>
                     <a href="/dashboard" class="nav-link <%= title === 'Dashboard' ? 'active' : '' %>">
-                        📊 Dashboard
+                        Dashboard
                     </a>
                     <a href="/create-task" class="nav-link <%= title === 'Create Task' ? 'active' : '' %>">
                         ➕ Create Task
                     </a>
                     <a href="/view-tasks" class="nav-link <%= title === 'Your Tasks' ? 'active' : '' %>">
-                        📋 View Tasks
+                        View Tasks
                     </a>
                     <div class="user-info">
                         <div class="user-avatar">
@@ -30,16 +30,16 @@
                         </div>
                         <span><%= user.username %></span>
                     </div>
-                    <a href="/logout" class="nav-link">🚪 Logout</a>
+                    <a href="/logout" class="nav-link"> Logout</a>
                 <% } else { %>
                     <a href="/" class="nav-link <%= title === 'Task Management System' ? 'active' : '' %>">
-                        🏠 Home
+                        Home
                     </a>
                     <a href="/login" class="nav-link <%= title === 'Login' ? 'active' : '' %>">
-                        🔑 Login
+                        Login
                     </a>
                     <a href="/register" class="nav-link <%= title === 'Register' ? 'active' : '' %>">
-                        📝 Register
+                        Register
                     </a>
                 <% } %>
             </div>

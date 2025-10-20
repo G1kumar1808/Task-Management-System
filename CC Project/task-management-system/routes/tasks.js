@@ -96,6 +96,25 @@ async function getUserMap(token) {
   }
   return userMap;
 }
+
+// Function to generate fresh download URL
+async function generateFreshDownloadUrl(fileKey) {
+  if (!fileKey || !S3_BUCKET) {
+    return null;
+  }
+  
+  try {
+    const signedUrl = await s3.getSignedUrlPromise("getObject", {
+      Bucket: S3_BUCKET,
+      Key: fileKey,
+      Expires: 900, // 15 minutes - longer expiry for downloads
+    });
+    return signedUrl;
+  } catch (err) {
+    console.warn("Failed to generate fresh download URL for", fileKey, err.message);
+    return null;
+  }
+}
 // ========== END HELPER FUNCTIONS ==========
 
 // Create task endpoint (expects fileKey if file uploaded via presigned URL)
@@ -288,6 +307,78 @@ router.get("/view-tasks", async (req, res) => {
       user: req.session.user || null,
       tasks: [],
     });
+  }
+});
+
+// NEW: Download file endpoint - generates fresh download URLs
+router.get("/download-file/:taskId", async (req, res) => {
+  if (!req.session.user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const taskId = req.params.taskId;
+    
+    // Fetch tasks to find the specific task
+    let tasks = await getTasks();
+    
+    // If there's a backend API configured, try to fetch authoritative tasks
+    if (AWS_API_URL) {
+      try {
+        const resp = await axios.get(`${AWS_API_URL}/tasks`, {
+          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+        });
+        if (resp.data && Array.isArray(resp.data.tasks)) {
+          const backend = resp.data.tasks.map((it) => ({
+            id: it.TaskID || it.id || it.taskId,
+            name: it.Name || it.name || it.taskName,
+            description: it.Description || it.description || it.taskDescription,
+            createdBy: it.CreatedBy || it.createdBy,
+            assignedTo: it.AssignedTo || it.assignedTo || [],
+            fileKey: it.FileKey || it.fileKey || null,
+            fileUrl: it.FileUrl || it.fileUrl || null,
+            createdAt: it.CreatedAt || it.createdAt,
+          }));
+          tasks = backend;
+        }
+      } catch (err) {
+        console.warn('Failed to fetch tasks from AWS API for download:', err.message);
+      }
+    }
+
+    const task = tasks.find((t) => t.id === taskId);
+    
+    if (!task) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    // Check if user has permission to download (either creator or assigned)
+    const uid = req.session.user?.userId || req.session.user?.userID || null;
+    const hasPermission = task.createdBy && String(task.createdBy) === String(uid) ||
+                         (task.assignedTo || []).some((a) => String(a) === String(uid));
+    
+    if (!hasPermission) {
+      return res.status(403).json({ error: "No permission to download this file" });
+    }
+
+    if (!task.fileKey) {
+      return res.status(404).json({ error: "No file attached to this task" });
+    }
+
+    // Generate fresh download URL
+    const downloadUrl = await generateFreshDownloadUrl(task.fileKey);
+    
+    if (!downloadUrl) {
+      return res.status(500).json({ error: "Failed to generate download link" });
+    }
+
+    res.json({ 
+      downloadUrl: downloadUrl,
+      fileName: task.name || 'download'
+    });
+  } catch (error) {
+    console.error('Download error:', error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -493,18 +584,7 @@ router.get("/task/:taskId/files", async (req, res) => {
 
   // Add task file if exists
   if (task.fileKey) {
-    let downloadUrl = task.fileUrl;
-    if (S3_BUCKET) {
-      try {
-        downloadUrl = await s3.getSignedUrlPromise("getObject", {
-          Bucket: S3_BUCKET,
-          Key: task.fileKey,
-          Expires: 60,
-        });
-      } catch (err) {
-        console.warn("Failed to sign task file download:", err.message);
-      }
-    }
+    let downloadUrl = await generateFreshDownloadUrl(task.fileKey);
 
     files.push({
       name: task.fileKey.split('/').pop() || 'Task File',
@@ -519,18 +599,7 @@ router.get("/task/:taskId/files", async (req, res) => {
   // Add comment attachments
   for (const comment of comments) {
     if (comment.FileKey) {
-      let downloadUrl = comment.FileUrl;
-      if (S3_BUCKET) {
-        try {
-          downloadUrl = await s3.getSignedUrlPromise("getObject", {
-            Bucket: S3_BUCKET,
-            Key: comment.FileKey,
-            Expires: 60,
-          });
-        } catch (err) {
-          console.warn("Failed to sign comment file download:", err.message);
-        }
-      }
+      let downloadUrl = await generateFreshDownloadUrl(comment.FileKey);
 
       files.push({
         name: comment.FileKey.split('/').pop() || 'Attachment',

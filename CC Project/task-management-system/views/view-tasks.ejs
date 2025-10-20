@@ -84,10 +84,13 @@
                         <% } %>
                         
                         <div class="task-actions">
-                            <% if (task.downloadUrl) { %>
-                                <a href="<%= task.downloadUrl %>" class="btn btn-outline" target="_blank">📎 Download Attachment</a>
-                            <% } else if (task.fileUrl) { %>
-                                <a href="<%= task.fileUrl %>" class="btn btn-outline" target="_blank">📎 Download Attachment</a>
+                            <% if (task.fileKey || task.fileUrl) { %>
+                                <button class="btn btn-outline download-btn" 
+                                        data-task-id="<%= task.id %>"
+                                        data-file-key="<%= task.fileKey %>"
+                                        data-file-name="<%= task.name %>">
+                                    📎 Download Attachment
+                                </button>
                             <% } %>
                             <% if (task.id) { %>
                                 <a href="/task/<%= task.id %>" class="btn btn-secondary">View Details</a>
@@ -123,6 +126,14 @@
                 <button id="clear-search-results" class="btn btn-primary">Clear Search</button>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- Loading Spinner -->
+<div id="loadingSpinner" class="loading-spinner" style="display: none;">
+    <div class="spinner-content">
+        <div class="spinner"></div>
+        <p>Generating download link...</p>
     </div>
 </div>
 
@@ -280,6 +291,43 @@
         font-weight: 600;
     }
 
+    /* Loading Spinner */
+    .loading-spinner {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+    }
+
+    .spinner-content {
+        background: white;
+        padding: 2rem;
+        border-radius: 8px;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .spinner {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid var(--primary);
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 1rem;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
     /* Responsive adjustments */
     @media (max-width: 768px) {
         .task-actions {
@@ -317,6 +365,7 @@
         const searchStats = document.getElementById('search-stats');
         const taskCards = document.querySelectorAll('.task-card');
         const originalTaskCount = taskCards.length;
+        const loadingSpinner = document.getElementById('loadingSpinner');
 
         // Function to update search stats
         function updateSearchStats(visibleCount, totalCount, isSearching) {
@@ -400,6 +449,54 @@
                 }
             });
         }
+
+        // Download file functionality - FIXED VERSION
+        document.querySelectorAll('.download-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+                const taskId = this.getAttribute('data-task-id');
+                const fileName = this.getAttribute('data-file-name') || 'download';
+                
+                // Show loading spinner
+                loadingSpinner.style.display = 'flex';
+                
+                try {
+                    console.log('Requesting download for task:', taskId);
+                    
+                    // Get fresh download URL from server
+                    const response = await fetch(`/download-file/${taskId}`);
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    if (data.downloadUrl) {
+                        console.log('Download URL received, starting download...');
+                        
+                        // Create a temporary anchor element to trigger download
+                        const a = document.createElement('a');
+                        a.href = data.downloadUrl;
+                        a.download = fileName;
+                        a.target = '_blank';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        
+                        console.log('Download initiated successfully');
+                    } else {
+                        throw new Error('No download URL received from server');
+                    }
+                } catch (error) {
+                    console.error('Download error:', error);
+                    alert('Failed to download file: ' + error.message);
+                } finally {
+                    // Hide loading spinner
+                    loadingSpinner.style.display = 'none';
+                }
+            });
+        });
 
         // Event listeners
         searchInput.addEventListener('input', function() {
