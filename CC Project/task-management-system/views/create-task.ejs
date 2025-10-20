@@ -28,10 +28,10 @@
 
             <div class="form-group">
                 <label for="userSearch">Search and Assign Users</label>
-                <input type="text" id="userSearch" class="form-control" placeholder="Type to filter users...">
+                <input type="text" id="userSearch" class="form-control" placeholder="Type username or email to search...">
                 
                 <div id="searchResults" class="search-results-container">
-                    <div class="loading-users">Loading users...</div>
+                    <div class="no-results">Start typing to search for users</div>
                 </div>
                 
                 <label for="assignedUsers" style="margin-top: 1rem;">Selected Users</label>
@@ -40,7 +40,7 @@
                 </div>
                 <input type="hidden" id="assignedUsers" name="assignedUsers">
                 
-                <small style="display: block; margin-top: 0.5rem; color: var(--gray);">Type to filter users and click "+ Add" to assign them to this task</small>
+                <small style="display: block; margin-top: 0.5rem; color: var(--gray);">Type username or email to search and click "+ Add" to assign them to this task</small>
             </div>
 
             <button type="submit" class="btn btn-primary btn-full">Create Task</button>
@@ -59,60 +59,43 @@
     const fileInput = document.getElementById('fileAttached');
 
     let selectedUsers = [];
-    let allUsers = [];
 
-    // Load all users on page load
-    document.addEventListener('DOMContentLoaded', async () => {
+    // Real-time searching as user types
+    searchInput.addEventListener('input', async () => {
+        const query = searchInput.value.trim();
+        
+        resultsDiv.innerHTML = ''; // Clear previous results
+        resultsDiv.classList.remove('active'); // Hide results container by default
+
+        if (query === '') {
+            resultsDiv.innerHTML = '<div class="no-results">Start typing to search for users</div>';
+            return;
+        }
+
         try {
-            console.log('Loading users...');
-            const res = await fetch('/search-users?q=');
-            
+            resultsDiv.innerHTML = '<div class="loading-users">Searching users...</div>';
+
+            // Call the server-side search endpoint
+            const res = await fetch(`/search-users?q=${encodeURIComponent(query)}`);
+
             if (!res.ok) {
                 throw new Error(`HTTP error! status: ${res.status}`);
             }
-            
-            const users = await res.json();
-            console.log('Loaded users:', users);
-            
-            if (Array.isArray(users)) {
-                allUsers = users;
-                displayAllUsers();
-            } else {
+
+            // Server returns an object { users: [...] } for consistency
+            const data = await res.json();
+            // Support both { users: [...] } and legacy array responses
+            const users = Array.isArray(data) ? data : (data.users || []);
+
+            if (!Array.isArray(users)) {
                 throw new Error('Invalid response format');
             }
+
+            displaySearchResults(users);
         } catch (err) {
-            console.error('Failed to load users:', err);
-            resultsDiv.innerHTML = '<div class="no-results">Error loading users. Please refresh the page.</div>';
+            console.error('Failed to search users:', err);
+            resultsDiv.innerHTML = '<div class="no-results">Error searching users. Please try again.</div>';
         }
-    });
-
-    // Display all users initially
-    function displayAllUsers() {
-        if (allUsers.length === 0) {
-            resultsDiv.innerHTML = '<div class="no-results">No users available</div>';
-            return;
-        }
-
-        displaySearchResults(allUsers);
-    }
-
-    // Real-time filtering as user types
-    searchInput.addEventListener('input', () => {
-        const query = searchInput.value.trim().toLowerCase();
-        
-        if (query === '') {
-            // Show all users when search is empty
-            displayAllUsers();
-            return;
-        }
-
-        // Filter users based on search query
-        const filteredUsers = allUsers.filter(user => 
-            (user.Username && user.Username.toLowerCase().includes(query)) || 
-            (user.Email && user.Email.toLowerCase().includes(query))
-        );
-
-        displaySearchResults(filteredUsers);
     });
 
     function displaySearchResults(users) {
@@ -122,6 +105,9 @@
             resultsDiv.innerHTML = '<div class="no-results">No users found</div>';
             return;
         }
+
+        // Show results container only if there are users
+        resultsDiv.classList.add('active');
 
         users.forEach(user => {
             // Skip if user is already selected
@@ -139,18 +125,7 @@
             
             userElement.querySelector('.add-user-btn').addEventListener('click', () => {
                 addUserToSelection(user);
-                // Re-filter to update the list (remove the selected user)
-                const currentQuery = searchInput.value.trim().toLowerCase();
-                if (currentQuery === '') {
-                    displayAllUsers();
-                } else {
-                    const filtered = allUsers.filter(u => 
-                        ((u.Username && u.Username.toLowerCase().includes(currentQuery)) || 
-                         (u.Email && u.Email.toLowerCase().includes(currentQuery))) &&
-                        !selectedUsers.find(selected => selected.UserID === u.UserID)
-                    );
-                    displaySearchResults(filtered);
-                }
+                displaySearchResults(users.filter(u => u.UserID !== user.UserID)); // Update results
             });
             
             resultsDiv.appendChild(userElement);
@@ -158,28 +133,19 @@
     }
 
     function addUserToSelection(user) {
-        if (!selectedUsers.find(u => u.UserID === user.UserID)) {
-            selectedUsers.push(user);
-            updateSelectedUsersDisplay();
-            updateAssignedUsersInput();
-        }
+        selectedUsers.push(user);
+        updateSelectedUsersDisplay();
+        updateHiddenInput();
     }
 
     function removeUserFromSelection(userId) {
         selectedUsers = selectedUsers.filter(user => user.UserID !== userId);
         updateSelectedUsersDisplay();
-        updateAssignedUsersInput();
+        updateHiddenInput();
         
-        // Refresh the user list to show the removed user again
-        const currentQuery = searchInput.value.trim().toLowerCase();
-        if (currentQuery === '') {
-            displayAllUsers();
-        } else {
-            const filtered = allUsers.filter(user => 
-                (user.Username && user.Username.toLowerCase().includes(currentQuery)) || 
-                (user.Email && user.Email.toLowerCase().includes(currentQuery))
-            );
-            displaySearchResults(filtered);
+        // Refresh search results if search is active
+        if (searchInput.value.trim() !== '') {
+            searchInput.dispatchEvent(new Event('input'));
         }
     }
 
@@ -192,27 +158,26 @@
         }
 
         selectedUsers.forEach(user => {
-            const userElement = document.createElement('div');
-            userElement.className = 'selected-user-item';
-            userElement.innerHTML = `
+            const selectedElement = document.createElement('div');
+            selectedElement.className = 'selected-user-item';
+            selectedElement.innerHTML = `
                 <div class="user-info">
-                    <strong>${user.Username || 'Unknown User'}</strong>
+                    <strong>${user.Username || 'Unknown'}</strong>
                     <span>${user.Email || 'No email'}</span>
                 </div>
-                <button type="button" class="remove-user-btn" title="Remove user">×</button>
+                <button type="button" class="remove-user-btn">×</button>
             `;
             
-            userElement.querySelector('.remove-user-btn').addEventListener('click', () => {
+            selectedElement.querySelector('.remove-user-btn').addEventListener('click', () => {
                 removeUserFromSelection(user.UserID);
             });
             
-            selectedUsersDiv.appendChild(userElement);
+            selectedUsersDiv.appendChild(selectedElement);
         });
     }
 
-    function updateAssignedUsersInput() {
+    function updateHiddenInput() {
         assignedUsersInput.value = selectedUsers.map(user => user.UserID).join(',');
-        console.log('Assigned users:', assignedUsersInput.value);
     }
 
     // Handle presigned upload on form submit
@@ -226,14 +191,11 @@
         const file = fileInput.files[0];
         
         try {
-            console.log('File:', file.name, file.type);
             const presignRes = await fetch(`/presign-upload?filename=${encodeURIComponent(file.name)}&contentType=${encodeURIComponent(file.type)}`);
-            console.log('Presign:', presignRes.status, presignRes.statusText);
             
             if (!presignRes.ok) throw new Error(`Presign failed: ${presignRes.statusText}`);
             
             const { url, key } = await presignRes.json();
-            console.log('Presigned URL:', url);
             
             const uploadRes = await fetch(url, {
                 method: 'PUT',
@@ -241,7 +203,6 @@
                 body: file
             });
             
-            console.log('Upload:', uploadRes.status, uploadRes.statusText);
             if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.statusText}`);
             
             const hidden = document.createElement('input');
@@ -251,31 +212,39 @@
             form.appendChild(hidden);
             form.submit();
         } catch (err) {
-            console.error('Error:', err.message);
             alert('File upload failed. Check console for details.');
         }
     });
 </script>
 
 <style>
+    :root {
+        --primary: #4361ee;
+        --primary-dark: #3a56d4;
+        --gray-light: #e9ecef;
+        --gray: #6c757d;
+        --dark: #212529;
+        --border-radius: 8px;
+        --transition: all 0.3s ease;
+    }
+
     .search-results-container {
         margin-top: 10px;
         border: 1px solid var(--gray-light);
         border-radius: var(--border-radius);
-        max-height: 300px;
+        max-height: 200px;
         overflow-y: auto;
         background: white;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
 
     .search-result-item {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 12px 15px;
+        padding: 10px 15px;
         border-bottom: 1px solid var(--gray-light);
         transition: var(--transition);
-        cursor: pointer;
     }
 
     .search-result-item:hover {
@@ -286,19 +255,17 @@
         border-bottom: none;
     }
 
-    .search-result-item .user-info {
+    .user-info {
         display: flex;
         flex-direction: column;
-        flex: 1;
     }
 
-    .search-result-item .user-info strong {
+    .user-info strong {
         font-weight: 600;
-        margin-bottom: 2px;
         color: var(--dark);
     }
 
-    .search-result-item .user-info span {
+    .user-info span {
         font-size: 0.9rem;
         color: var(--gray);
     }
@@ -307,13 +274,11 @@
         background: var(--primary);
         color: white;
         border: none;
-        padding: 8px 16px;
+        padding: 5px 15px;
         border-radius: 20px;
         cursor: pointer;
         font-size: 0.9rem;
-        font-weight: 600;
         transition: var(--transition);
-        white-space: nowrap;
     }
 
     .add-user-btn:hover {
@@ -323,65 +288,33 @@
 
     .selected-users-container {
         margin-top: 10px;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        min-height: 60px;
-        padding: 15px;
         border: 1px solid var(--gray-light);
         border-radius: var(--border-radius);
+        padding: 10px;
         background: #fafbff;
+        min-height: 60px;
     }
 
     .selected-user-item {
         display: flex;
+        justify-content: space-between;
         align-items: center;
-        gap: 10px;
+        padding: 8px 12px;
+        margin-bottom: 5px;
         background: white;
-        padding: 10px 15px;
-        border-radius: 25px;
-        border: 2px solid var(--primary);
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        animation: slideIn 0.3s ease;
-    }
-
-    @keyframes slideIn {
-        from {
-            opacity: 0;
-            transform: translateY(10px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-
-    .selected-user-item .user-info {
-        display: flex;
-        flex-direction: column;
-    }
-
-    .selected-user-item .user-info strong {
-        font-weight: 600;
-        font-size: 0.9rem;
-        color: var(--dark);
-    }
-
-    .selected-user-item .user-info span {
-        font-size: 0.8rem;
-        color: var(--gray);
+        border-radius: var(--border-radius);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     }
 
     .remove-user-btn {
-        background: var(--danger);
+        background: #f72585;
         color: white;
         border: none;
-        width: 24px;
-        height: 24px;
+        width: 20px;
+        height: 20px;
         border-radius: 50%;
         cursor: pointer;
         font-size: 1rem;
-        font-weight: bold;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -394,7 +327,7 @@
     }
 
     .no-results, .no-selection, .loading-users {
-        padding: 20px;
+        padding: 15px;
         text-align: center;
         color: var(--gray);
         font-style: italic;
@@ -404,22 +337,17 @@
         color: var(--primary);
     }
 
-    /* Scrollbar styling */
-    .search-results-container::-webkit-scrollbar {
-        width: 6px;
+    .form-control {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid var(--gray-light);
+        border-radius: var(--border-radius);
+        font-size: 1rem;
     }
 
-    .search-results-container::-webkit-scrollbar-track {
-        background: #f1f1f1;
-        border-radius: 0 8px 8px 0;
-    }
-
-    .search-results-container::-webkit-scrollbar-thumb {
-        background: var(--primary);
-        border-radius: 3px;
-    }
-
-    .search-results-container::-webkit-scrollbar-thumb:hover {
-        background: var(--primary-dark);
+    .form-control:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 5px rgba(67, 97, 238, 0.3);
     }
 </style>

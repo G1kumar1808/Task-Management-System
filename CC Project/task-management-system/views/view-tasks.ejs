@@ -7,10 +7,32 @@
             <a href="/create-task" class="btn btn-primary">➕ Create New Task</a>
         </div>
 
-        <div class="tasks-grid">
+        <!-- Search Section -->
+        <div class="search-section">
+            <div class="search-box">
+                <input 
+                    type="text" 
+                    id="search-input" 
+                    placeholder="🔍 Search tasks by name, description, or assignee..." 
+                    class="form-control search-input"
+                >
+                <button id="clear-search" class="clear-search-btn" style="display: none;">
+                    ✕
+                </button>
+            </div>
+            <div class="search-stats">
+                <span id="search-stats">
+                    Showing <%= tasks.length %> task<%= tasks.length !== 1 ? 's' : '' %>
+                </span>
+            </div>
+        </div>
+
+        <div class="tasks-grid" id="tasks-grid">
             <% if (tasks && tasks.length) { %>
                 <% tasks.forEach(task => { %>
-                    <div class="task-card">
+                    <div class="task-card" data-task-name="<%= task.name.toLowerCase() %>" 
+                         data-task-description="<%= (task.description || '').toLowerCase() %>"
+                         data-task-assignees="<%= (task.assignedToUsernames || []).join(' ').toLowerCase() %>">
                         <div class="task-header">
                             <div>
                                 <h3 class="task-title">
@@ -69,10 +91,11 @@
                             <% } %>
                             <% if (task.id) { %>
                                 <a href="/task/<%= task.id %>" class="btn btn-secondary">View Details</a>
+                                <a href="/task/<%= task.id %>/files" class="btn btn-outline">📁 Files</a>
                             <% } %>
                         </div>
 
-                        <!-- Additional task info (from second template) -->
+                        <!-- Additional task info -->
                         <div class="task-additional-info">
                             <div class="task-id">
                                 <small>Task ID: <%= task.id %></small>
@@ -91,12 +114,93 @@
                 </div>
             <% } %>
         </div>
+
+        <!-- No search results message (hidden by default) -->
+        <div id="no-results" class="no-results" style="display: none;">
+            <div class="task-card" style="text-align: center; padding: 3rem;">
+                <h3 style="margin-bottom: 1rem;">No matching tasks found</h3>
+                <p style="color: var(--gray); margin-bottom: 1.5rem;">Try adjusting your search terms</p>
+                <button id="clear-search-results" class="btn btn-primary">Clear Search</button>
+            </div>
+        </div>
     </div>
 </div>
 
 <%- include('partials/footer') %>
 
 <style>
+    /* Search Section Styles */
+    .search-section {
+        background: white;
+        padding: 1.5rem;
+        border-radius: var(--border-radius);
+        box-shadow: var(--box-shadow);
+        margin-bottom: 2rem;
+    }
+
+    .search-box {
+        position: relative;
+        max-width: 600px;
+        margin-bottom: 1rem;
+    }
+
+    .search-input {
+        width: 100%;
+        padding: 1rem 45px 1rem 1rem;
+        border: 2px solid var(--gray-light);
+        border-radius: var(--border-radius);
+        font-size: 1rem;
+        transition: var(--transition);
+        background: white;
+    }
+
+    .search-input:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.15);
+    }
+
+    .search-input::placeholder {
+        color: var(--gray);
+    }
+
+    .clear-search-btn {
+        position: absolute;
+        right: 15px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: none;
+        border: none;
+        font-size: 18px;
+        color: var(--gray);
+        cursor: pointer;
+        padding: 5px;
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: var(--transition);
+    }
+
+    .clear-search-btn:hover {
+        background: var(--gray-light);
+        color: var(--dark);
+    }
+
+    .search-stats {
+        font-size: 0.9rem;
+        color: var(--gray);
+        font-weight: 500;
+    }
+
+    .no-results {
+        text-align: center;
+        margin-top: 2rem;
+    }
+
+    /* Task Link Styles */
     .task-link {
         color: var(--primary);
         text-decoration: none;
@@ -108,6 +212,7 @@
         text-decoration: underline;
     }
 
+    /* Task Assignment Section */
     .task-assignment-section {
         margin: 1.5rem 0;
         padding: 1rem 0;
@@ -138,6 +243,7 @@
         display: inline-block;
     }
 
+    /* Task Actions */
     .task-actions {
         display: flex;
         gap: 0.8rem;
@@ -150,6 +256,7 @@
         font-size: 0.9rem;
     }
 
+    /* Task Additional Info */
     .task-additional-info {
         margin-top: 1.5rem;
         padding-top: 1rem;
@@ -163,6 +270,14 @@
     .task-additional-info small {
         color: var(--gray);
         font-size: 0.8rem;
+    }
+
+    /* Search highlight */
+    .search-highlight {
+        background-color: #fff3cd;
+        padding: 2px 4px;
+        border-radius: 3px;
+        font-weight: 600;
     }
 
     /* Responsive adjustments */
@@ -180,5 +295,136 @@
             flex-direction: column;
             gap: 0.3rem;
         }
+
+        .search-section {
+            padding: 1rem;
+        }
+
+        .search-input {
+            font-size: 14px;
+            padding: 0.8rem 40px 0.8rem 0.8rem;
+        }
     }
 </style>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const searchInput = document.getElementById('search-input');
+        const clearSearchBtn = document.getElementById('clear-search');
+        const clearSearchResultsBtn = document.getElementById('clear-search-results');
+        const tasksGrid = document.getElementById('tasks-grid');
+        const noResults = document.getElementById('no-results');
+        const searchStats = document.getElementById('search-stats');
+        const taskCards = document.querySelectorAll('.task-card');
+        const originalTaskCount = taskCards.length;
+
+        // Function to update search stats
+        function updateSearchStats(visibleCount, totalCount, isSearching) {
+            if (isSearching) {
+                searchStats.textContent = `Showing ${visibleCount} of ${totalCount} task${totalCount !== 1 ? 's' : ''}`;
+            } else {
+                searchStats.textContent = `Showing ${totalCount} task${totalCount !== 1 ? 's' : ''}`;
+            }
+        }
+
+        // Function to perform search
+        function performSearch(searchTerm) {
+            const term = searchTerm.toLowerCase().trim();
+            let visibleCount = 0;
+
+            taskCards.forEach(card => {
+                const taskName = card.getAttribute('data-task-name');
+                const taskDescription = card.getAttribute('data-task-description');
+                const taskAssignees = card.getAttribute('data-task-assignees');
+
+                const matches = term === '' || 
+                    taskName.includes(term) || 
+                    taskDescription.includes(term) || 
+                    taskAssignees.includes(term);
+
+                if (matches) {
+                    card.style.display = 'block';
+                    visibleCount++;
+                    
+                    // Highlight search terms in task content
+                    if (term !== '') {
+                        highlightText(card, term);
+                    } else {
+                        removeHighlights(card);
+                    }
+                } else {
+                    card.style.display = 'none';
+                    removeHighlights(card);
+                }
+            });
+
+            // Show/hide no results message
+            if (term !== '' && visibleCount === 0) {
+                tasksGrid.style.display = 'none';
+                noResults.style.display = 'block';
+            } else {
+                tasksGrid.style.display = 'grid';
+                noResults.style.display = 'none';
+            }
+
+            // Update search stats
+            updateSearchStats(visibleCount, originalTaskCount, term !== '');
+        }
+
+        // Function to highlight search terms
+        function highlightText(element, term) {
+            const elementsToHighlight = element.querySelectorAll('.task-title, .task-description, .assignee-badge');
+            
+            elementsToHighlight.forEach(el => {
+                const originalHTML = el.getAttribute('data-original-html') || el.innerHTML;
+                el.setAttribute('data-original-html', originalHTML);
+                
+                const highlightedHTML = originalHTML.replace(
+                    new RegExp(term, 'gi'),
+                    match => `<span class="search-highlight">${match}</span>`
+                );
+                
+                el.innerHTML = highlightedHTML;
+            });
+        }
+
+        // Function to remove highlights
+        function removeHighlights(element) {
+            const elementsWithHighlights = element.querySelectorAll('[data-original-html]');
+            
+            elementsWithHighlights.forEach(el => {
+                const originalHTML = el.getAttribute('data-original-html');
+                if (originalHTML) {
+                    el.innerHTML = originalHTML;
+                    el.removeAttribute('data-original-html');
+                }
+            });
+        }
+
+        // Event listeners
+        searchInput.addEventListener('input', function() {
+            const searchTerm = this.value;
+            performSearch(searchTerm);
+            
+            // Show/hide clear button
+            clearSearchBtn.style.display = searchTerm ? 'flex' : 'none';
+        });
+
+        clearSearchBtn.addEventListener('click', function() {
+            searchInput.value = '';
+            performSearch('');
+            clearSearchBtn.style.display = 'none';
+            searchInput.focus();
+        });
+
+        clearSearchResultsBtn.addEventListener('click', function() {
+            searchInput.value = '';
+            performSearch('');
+            clearSearchBtn.style.display = 'none';
+            searchInput.focus();
+        });
+
+        // Initialize search stats
+        updateSearchStats(originalTaskCount, originalTaskCount, false);
+    });
+</script>

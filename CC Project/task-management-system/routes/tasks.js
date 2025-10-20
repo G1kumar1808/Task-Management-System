@@ -47,6 +47,24 @@ function formatTime(dateString) {
   }
 }
 
+// Helper function to format date
+function formatDate(dateString) {
+  try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) {
+          return 'Unknown date';
+      }
+      return date.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric'
+      });
+  } catch (error) {
+      console.error('Error formatting date:', error);
+      return 'Unknown date';
+  }
+}
+
 // Helper function to get user initials
 function getInitials(username) {
   if (!username || typeof username !== 'string') {
@@ -57,6 +75,26 @@ function getInitials(username) {
       .map(name => name.charAt(0).toUpperCase())
       .join('')
       .substring(0, 2);
+}
+
+// Helper function to get user map
+async function getUserMap(token) {
+  let userMap = {};
+  if (AWS_API_URL) {
+    try {
+      const usersResponse = await axios.get(`${AWS_API_URL}/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (usersResponse.data && usersResponse.data.users) {
+        usersResponse.data.users.forEach(user => {
+          userMap[user.UserID] = user.Username;
+        });
+      }
+    } catch (err) {
+      console.warn('Could not fetch users for mapping:', err.message);
+    }
+  }
+  return userMap;
 }
 // ========== END HELPER FUNCTIONS ==========
 
@@ -179,21 +217,7 @@ router.get("/view-tasks", async (req, res) => {
     }
 
     // Fetch all users to map IDs to usernames
-    let userMap = {};
-    if (AWS_API_URL) {
-      try {
-        const usersResponse = await axios.get(`${AWS_API_URL}/users`, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
-        });
-        if (usersResponse.data && usersResponse.data.users) {
-          usersResponse.data.users.forEach(user => {
-            userMap[user.UserID] = user.Username;
-          });
-        }
-      } catch (err) {
-        console.warn('Could not fetch users for mapping:', err.message);
-      }
-    }
+    const userMap = await getUserMap(req.session.user?.token || '');
 
     // Map user IDs to usernames in tasks
     tasks = tasks.map(task => {
@@ -312,6 +336,31 @@ router.get("/task/:taskId", async (req, res) => {
       });
   }
 
+  // Get user map for username mapping
+  const userMap = await getUserMap(req.session.user?.token || '');
+
+  // Map assigned users to usernames
+  if (task.assignedTo && Array.isArray(task.assignedTo)) {
+    task.assignedToUsernames = task.assignedTo.map(userId => 
+      userMap[userId] || userId
+    );
+  }
+
+  // Generate presigned URL for task file if it exists
+  if (task.fileKey && S3_BUCKET) {
+    try {
+      const signedUrl = await s3.getSignedUrlPromise("getObject", {
+        Bucket: S3_BUCKET,
+        Key: task.fileKey,
+        Expires: 60,
+      });
+      task.downloadUrl = signedUrl;
+    } catch (err) {
+      console.warn("Failed to sign task file download for", task.fileKey, err.message);
+      task.downloadUrl = task.fileUrl;
+    }
+  }
+
   // Fetch comments from CommentsTable
   let comments = [];
   try {
@@ -325,23 +374,6 @@ router.get("/task/:taskId", async (req, res) => {
     comments = commentsResult.Items || [];
   } catch (err) {
     console.warn('Could not fetch comments:', err.message);
-  }
-
-  // Fetch all users to map IDs to usernames for comments
-  let userMap = {};
-  if (AWS_API_URL) {
-    try {
-      const usersResponse = await axios.get(`${AWS_API_URL}/users`, {
-        headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
-      });
-      if (usersResponse.data && usersResponse.data.users) {
-        usersResponse.data.users.forEach(user => {
-          userMap[user.UserID] = user.Username;
-        });
-      }
-    } catch (err) {
-      console.warn('Could not fetch users for comment mapping:', err.message);
-    }
   }
 
   // Map user IDs to usernames in comments
@@ -390,8 +422,142 @@ router.get("/task/:taskId", async (req, res) => {
     user: req.session.user || null,
     task: task,
     comments: commentsWithUrls,
-    formatTime: formatTime, // Pass the helper function to the template
-    getInitials: getInitials // Pass the helper function to the template
+    formatTime: formatTime,
+    getInitials: getInitials
+  });
+});
+
+// Task files page
+router.get("/task/:taskId/files", async (req, res) => {
+  if (!req.session.user) return res.redirect("/login");
+
+  const taskId = req.params.taskId;
+  
+  // Fetch tasks to get task details
+  let tasks = await getTasks();
+  if (AWS_API_URL) {
+    try {
+      const resp = await axios.get(`${AWS_API_URL}/tasks`, {
+        headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+      });
+      if (resp.data && Array.isArray(resp.data.tasks)) {
+        const backend = resp.data.tasks.map((it) => ({
+          id: it.TaskID || it.id || it.taskId,
+          name: it.Name || it.name || it.taskName,
+          description: it.Description || it.description || it.taskDescription,
+          createdBy: it.CreatedBy || it.createdBy,
+          assignedTo: it.AssignedTo || it.assignedTo || [],
+          fileKey: it.FileKey || it.fileKey || null,
+          fileUrl: it.FileUrl || it.fileUrl || null,
+          createdAt: it.CreatedAt || it.createdAt,
+        }));
+        tasks = backend;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch tasks from AWS API for files page:', err.message);
+    }
+  }
+
+  let task = tasks.find((t) => t.id === taskId);
+
+  if (!task) {
+    return res
+      .status(404)
+      .render("error", { 
+        title: "Not Found", 
+        message: "Task not found",
+        user: req.session.user || null 
+      });
+  }
+
+  // Get user map for username mapping
+  const userMap = await getUserMap(req.session.user?.token || '');
+
+  // Fetch comments to get attachments
+  let comments = [];
+  try {
+    const commentsResult = await dynamodb
+      .scan({
+        TableName: "CommentsTable",
+        FilterExpression: "TaskID = :taskId",
+        ExpressionAttributeValues: { ":taskId": taskId },
+      })
+      .promise();
+    comments = commentsResult.Items || [];
+  } catch (err) {
+    console.warn('Could not fetch comments for files page:', err.message);
+  }
+
+  // Collect all files (task file + comment attachments)
+  let files = [];
+
+  // Add task file if exists
+  if (task.fileKey) {
+    let downloadUrl = task.fileUrl;
+    if (S3_BUCKET) {
+      try {
+        downloadUrl = await s3.getSignedUrlPromise("getObject", {
+          Bucket: S3_BUCKET,
+          Key: task.fileKey,
+          Expires: 60,
+        });
+      } catch (err) {
+        console.warn("Failed to sign task file download:", err.message);
+      }
+    }
+
+    files.push({
+      name: task.fileKey.split('/').pop() || 'Task File',
+      type: 'task',
+      uploadedBy: userMap[task.createdBy] || task.createdBy,
+      uploadedAt: task.createdAt,
+      downloadUrl: downloadUrl,
+      size: 'Unknown'
+    });
+  }
+
+  // Add comment attachments
+  for (const comment of comments) {
+    if (comment.FileKey) {
+      let downloadUrl = comment.FileUrl;
+      if (S3_BUCKET) {
+        try {
+          downloadUrl = await s3.getSignedUrlPromise("getObject", {
+            Bucket: S3_BUCKET,
+            Key: comment.FileKey,
+            Expires: 60,
+          });
+        } catch (err) {
+          console.warn("Failed to sign comment file download:", err.message);
+        }
+      }
+
+      files.push({
+        name: comment.FileKey.split('/').pop() || 'Attachment',
+        type: 'comment',
+        uploadedBy: userMap[comment.UserID] || comment.UserID,
+        uploadedAt: comment.CreatedAt,
+        downloadUrl: downloadUrl,
+        commentText: comment.CommentText,
+        size: 'Unknown'
+      });
+    }
+  }
+
+  // Sort files by upload date (newest first)
+  files.sort((a, b) => {
+    const dateA = new Date(a.uploadedAt || 0);
+    const dateB = new Date(b.uploadedAt || 0);
+    return dateB - dateA;
+  });
+
+  res.render("task-files", {
+    title: `Files - ${task.name}`,
+    user: req.session.user || null,
+    task: task,
+    files: files,
+    formatDate: formatDate,
+    formatTime: formatTime
   });
 });
 
@@ -477,12 +643,12 @@ router.get("/search-users", async (req, res) => {
         );
       }
 
-      console.log('Returning users:', users.length);
-      return res.json(users);
+  console.log('Returning users:', users.length);
+  return res.json({ users });
     } catch (err) {
-      console.warn("User search via API failed:", err.message);
-      // Fallback to dummy data
-      return getDummyUsers(q, res);
+  console.warn("User search via API failed:", err.message);
+  // Fallback to dummy data
+  return getDummyUsers(q, res);
     }
   }
 
@@ -511,7 +677,7 @@ function getDummyUsers(q, res) {
   }
   
   console.log('Returning dummy users:', users.length);
-  res.json(users);
+  res.json({ users });
 }
 
 // Presign upload URL (PUT) for browser direct upload

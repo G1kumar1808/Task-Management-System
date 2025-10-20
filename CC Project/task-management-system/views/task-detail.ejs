@@ -31,6 +31,9 @@
             font-size: 28px;
             border-bottom: 2px solid #eaeaea;
             padding-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         
         h2 {
@@ -64,6 +67,45 @@
         
         .task-details a:hover {
             text-decoration: underline;
+        }
+        
+        /* Action buttons */
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+            border: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+        
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #7f8c8d;
         }
         
         /* Comments section styles */
@@ -168,6 +210,7 @@
             font-size: 14px;
             display: inline-flex;
             align-items: center;
+            gap: 5px;
         }
         
         .comment-attachment a:hover {
@@ -230,6 +273,11 @@
             font-size: 14px;
             color: #495057;
             border: 1px dashed #ced4da;
+            transition: all 0.3s;
+        }
+        
+        .file-upload label:hover {
+            background: #e9ecef;
         }
         
         .file-upload input[type="file"] {
@@ -286,6 +334,7 @@
             justify-content: center;
             font-weight: bold;
             margin-right: 10px;
+            font-size: 14px;
         }
         
         .comment.other-user .user-avatar {
@@ -354,40 +403,78 @@
             .container {
                 padding: 10px;
             }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            h1 {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1><%= task.name %> <span class="task-status status-in-progress">In Progress</span></h1>
+        <h1>
+            <span><%= task.name %> <span class="task-status status-in-progress">In Progress</span></span>
+            <div class="action-buttons">
+                <a href="/view-tasks" class="btn btn-secondary">
+                    <i class="fas fa-arrow-left"></i> Back to Tasks
+                </a>
+                <a href="/task/<%= task.id %>/files" class="btn btn-primary">
+                    <i class="fas fa-folder"></i> View Files
+                </a>
+            </div>
+        </h1>
+        
         <div class="task-details">
             <p><strong>Description:</strong> <%= task.description %></p>
-            <p><strong>Assigned to:</strong> <%= (task.assignedTo || []).join(', ') %></p>
+            <p><strong>Assigned to:</strong> 
+                <% if (task.assignedToUsernames && task.assignedToUsernames.length > 0) { %>
+                    <%= task.assignedToUsernames.join(', ') %>
+                <% } else { %>
+                    No one assigned
+                <% } %>
+            </p>
             <p><strong>Created at:</strong> <%= task.createdAt %></p>
             <% if (task.downloadUrl) { %>
-                <p><strong>Attachment:</strong> <a href="<%= task.downloadUrl %>" target="_blank">Download</a></p>
+                <p><strong>Task Attachment:</strong> 
+                    <a href="<%= task.downloadUrl %>" target="_blank" download>
+                        <i class="fas fa-download"></i> Download File
+                    </a>
+                </p>
             <% } else if (task.fileUrl) { %>
-                <p><strong>Attachment:</strong> <a href="<%= task.fileUrl %>" target="_blank">Download</a></p>
+                <p><strong>Task Attachment:</strong> 
+                    <a href="<%= task.fileUrl %>" target="_blank" download>
+                        <i class="fas fa-download"></i> Download File
+                    </a>
+                </p>
             <% } %>
         </div>
 
         <div class="comments-container">
             <div class="comments-header">
                 <span>Comments</span>
-                <div class="members-info"><span class="online-indicator"></span> <span id="online-count">10</span> online, <span id="members-count">23</span> members</div>
+                <div class="members-info">
+                    <span class="online-indicator"></span> 
+                    <span id="online-count"><%= task.assignedToUsernames ? task.assignedToUsernames.length + 1 : 1 %></span> members
+                </div>
             </div>
             
             <div class="comments-list" id="comments-list">
                 <% if (!comments || comments.length === 0) { %>
-                    <div class="no-comments">No comments found.</div>
+                    <div class="no-comments">No comments yet. Be the first to comment!</div>
                 <% } else { %>
                     <% comments.forEach(comment => { %>
                         <div class="comment <%= comment.UserID === user.userId ? 'current-user' : 'other-user' %>" data-comment-id="<%= comment.CommentID %>">
                             <div class="comment-header">
                                 <% if (comment.UserID === user.userId) { %>
-                                    <div class="comment-time"><%= comment.CreatedAt %></div>
+                                    <div class="comment-time"><%= formatTime(comment.CreatedAt) %></div>
                                     <div class="user-name"><%= comment.Username || 'You' %></div>
-                                    <div class="user-avatar"><%= (comment.Username || 'You').charAt(0).toUpperCase() %></div>
+                                    <div class="user-avatar"><%= getInitials(comment.Username || 'You') %></div>
                                 <% } else { %>
                                     <div class="user-avatar"><%= getInitials(comment.Username || 'User') %></div>
                                     <div class="user-name"><%= comment.Username || 'User' %></div>
@@ -398,7 +485,9 @@
                                 <div class="comment-text"><%= comment.CommentText %></div>
                                 <% if (comment.FileUrl) { %>
                                     <div class="comment-attachment">
-                                        <a href="<%= comment.FileUrl %>" target="_blank"><i class="fas fa-paperclip"></i> Download Attachment</a>
+                                        <a href="<%= comment.FileUrl %>" target="_blank" download>
+                                            <i class="fas fa-paperclip"></i> Download Attachment
+                                        </a>
                                     </div>
                                 <% } %>
                             </div>
@@ -414,10 +503,15 @@
                     <input type="hidden" name="taskId" value="<%= task.id %>">
                     <textarea name="commentText" id="comment-text" rows="4" placeholder="Enter your comment" required></textarea>
                     <div class="file-upload">
-                        <label for="attachment"><i class="fas fa-paperclip"></i> Add Attachment</label>
+                        <label for="attachment">
+                            <i class="fas fa-paperclip"></i> 
+                            <span id="file-label">Add Attachment</span>
+                        </label>
                         <input type="file" name="attachment" id="attachment" accept="*/*">
                     </div>
-                    <button type="submit" class="submit-btn" id="submit-btn">Submit Comment</button>
+                    <button type="submit" class="submit-btn" id="submit-btn">
+                        <i class="fas fa-paper-plane"></i> Submit Comment
+                    </button>
                 </form>
             </div>
         </div>
@@ -428,7 +522,7 @@
         const currentUser = {
             id: "<%= user.userId %>",
             name: "<%= user.username %>",
-            initials: "<%= user.username ? user.username.charAt(0).toUpperCase() : 'U' %>"
+            initials: "<%= user.username ? getInitials(user.username) : 'U' %>"
         };
 
         // Set up event listeners
@@ -455,7 +549,7 @@
 
                 // Disable submit button and show loading
                 submitBtn.disabled = true;
-                submitBtn.textContent = 'Submitting...';
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
                 formMessages.innerHTML = '';
 
                 try {
@@ -485,14 +579,14 @@
                 } finally {
                     // Re-enable submit button
                     submitBtn.disabled = false;
-                    submitBtn.textContent = 'Submit Comment';
+                    submitBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Submit Comment';
                 }
             });
             
             // Handle file input display
             document.getElementById('attachment').addEventListener('change', function(e) {
                 const fileName = e.target.files[0] ? e.target.files[0].name : 'Add Attachment';
-                document.querySelector('.file-upload label').innerHTML = `<i class="fas fa-paperclip"></i> ${fileName}`;
+                document.getElementById('file-label').textContent = fileName;
             });
         }
 

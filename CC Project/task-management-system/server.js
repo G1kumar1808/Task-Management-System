@@ -51,6 +51,24 @@ function formatTime(dateString) {
     }
 }
 
+// Helper function to format date
+function formatDate(dateString) {
+    try {
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) {
+            return 'Unknown date';
+        }
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    } catch (error) {
+        console.error('Error formatting date:', error);
+        return 'Unknown date';
+    }
+}
+
 // Helper function to get user initials
 function getInitials(username) {
     if (!username || typeof username !== 'string') {
@@ -65,6 +83,7 @@ function getInitials(username) {
 
 // Make these available to EJS templates
 app.locals.formatTime = formatTime;
+app.locals.formatDate = formatDate;
 app.locals.getInitials = getInitials;
 // ========== END HELPER FUNCTIONS ==========
 
