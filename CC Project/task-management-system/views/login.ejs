@@ -4,7 +4,7 @@
     <div class="auth-card">
         <h2>Login to Your Account</h2>
         
-        <% if (success) { %>
+        <% if (typeof success !== 'undefined' && success) { %>
             <div class="alert alert-success">
                 <%= success %>
             </div>

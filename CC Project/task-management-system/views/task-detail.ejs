@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Task Details - Project Management</title>
+    <title><%= task.name %> - Task Details</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
@@ -251,6 +251,11 @@
             background: #2980b9;
         }
         
+        .submit-btn:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+        
         /* No comments message */
         .no-comments {
             text-align: center;
@@ -320,6 +325,26 @@
             color: #7f8c8d;
         }
         
+        /* Alert messages */
+        .alert {
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        
+        .alert-error {
+            background-color: #fee;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        
+        .alert-success {
+            background-color: #eff;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        
         /* Responsive adjustments */
         @media (max-width: 768px) {
             .comment {
@@ -334,299 +359,133 @@
 </head>
 <body>
     <div class="container">
-        <h1><span id="task-name">Loading...</span> <span class="task-status status-in-progress" id="task-status">In Progress</span></h1>
+        <h1><%= task.name %> <span class="task-status status-in-progress">In Progress</span></h1>
         <div class="task-details">
-            <p><strong>Description:</strong> <span id="task-description">Loading...</span></p>
-            <p><strong>Assigned to:</strong> <span id="task-assigned-to">Loading...</span></p>
-            <p><strong>Created at:</strong> <span id="task-created-at">Loading...</span></p>
-            <p id="task-attachment-container" style="display: none;"><strong>Attachment:</strong> <a id="task-attachment-link" href="#" target="_blank">Download</a></p>
+            <p><strong>Description:</strong> <%= task.description %></p>
+            <p><strong>Assigned to:</strong> <%= (task.assignedTo || []).join(', ') %></p>
+            <p><strong>Created at:</strong> <%= task.createdAt %></p>
+            <% if (task.downloadUrl) { %>
+                <p><strong>Attachment:</strong> <a href="<%= task.downloadUrl %>" target="_blank">Download</a></p>
+            <% } else if (task.fileUrl) { %>
+                <p><strong>Attachment:</strong> <a href="<%= task.fileUrl %>" target="_blank">Download</a></p>
+            <% } %>
         </div>
 
         <div class="comments-container">
             <div class="comments-header">
                 <span>Comments</span>
-                <div class="members-info"><span class="online-indicator"></span> <span id="online-count">0</span> online, <span id="members-count">0</span> members</div>
+                <div class="members-info"><span class="online-indicator"></span> <span id="online-count">10</span> online, <span id="members-count">23</span> members</div>
             </div>
             
             <div class="comments-list" id="comments-list">
-                <div class="loading">Loading comments...</div>
+                <% if (!comments || comments.length === 0) { %>
+                    <div class="no-comments">No comments found.</div>
+                <% } else { %>
+                    <% comments.forEach(comment => { %>
+                        <div class="comment <%= comment.UserID === user.userId ? 'current-user' : 'other-user' %>" data-comment-id="<%= comment.CommentID %>">
+                            <div class="comment-header">
+                                <% if (comment.UserID === user.userId) { %>
+                                    <div class="comment-time"><%= comment.CreatedAt %></div>
+                                    <div class="user-name"><%= comment.Username || 'You' %></div>
+                                    <div class="user-avatar"><%= (comment.Username || 'You').charAt(0).toUpperCase() %></div>
+                                <% } else { %>
+                                    <div class="user-avatar"><%= getInitials(comment.Username || 'User') %></div>
+                                    <div class="user-name"><%= comment.Username || 'User' %></div>
+                                    <div class="comment-time"><%= formatTime(comment.CreatedAt) %></div>
+                                <% } %>
+                            </div>
+                            <div class="comment-content">
+                                <div class="comment-text"><%= comment.CommentText %></div>
+                                <% if (comment.FileUrl) { %>
+                                    <div class="comment-attachment">
+                                        <a href="<%= comment.FileUrl %>" target="_blank"><i class="fas fa-paperclip"></i> Download Attachment</a>
+                                    </div>
+                                <% } %>
+                            </div>
+                        </div>
+                    <% }); %>
+                <% } %>
             </div>
 
             <div class="add-comment-form">
                 <h2>Add Comment</h2>
-                <form id="comment-form" enctype="multipart/form-data">
-                    <input type="hidden" name="taskId" id="task-id" value="">
+                <div id="form-messages"></div>
+                <form id="comment-form" action="/add-comment" method="post" enctype="multipart/form-data">
+                    <input type="hidden" name="taskId" value="<%= task.id %>">
                     <textarea name="commentText" id="comment-text" rows="4" placeholder="Enter your comment" required></textarea>
                     <div class="file-upload">
                         <label for="attachment"><i class="fas fa-paperclip"></i> Add Attachment</label>
                         <input type="file" name="attachment" id="attachment" accept="*/*">
                     </div>
-                    <button type="submit" class="submit-btn">Submit Comment</button>
+                    <button type="submit" class="submit-btn" id="submit-btn">Submit Comment</button>
                 </form>
             </div>
         </div>
     </div>
 
     <script>
-        // Current user info (in a real app, this would come from authentication)
+        // Current user info from server-side session
         const currentUser = {
-            id: "user123",
-            name: "You",
-            initials: "Y"
+            id: "<%= user.userId %>",
+            name: "<%= user.username %>",
+            initials: "<%= user.username ? user.username.charAt(0).toUpperCase() : 'U' %>"
         };
 
-        // Task ID from URL or context
-        const taskId = getTaskIdFromUrl(); // You would implement this based on your routing
-
-        // Initialize the page
+        // Set up event listeners
         document.addEventListener('DOMContentLoaded', function() {
-            loadTaskDetails();
-            loadComments();
             setupEventListeners();
         });
 
-        // Load task details from DynamoDB
-        async function loadTaskDetails() {
-            try {
-                // In a real app, you would fetch from your backend API
-                // const response = await fetch(`/api/tasks/${taskId}`);
-                // const task = await response.json();
-                
-                // Simulating API call with timeout
-                setTimeout(() => {
-                    // Mock task data - replace with actual API response
-                    const task = {
-                        id: taskId,
-                        name: "Design chat interface",
-                        description: "Create a modern chat interface for the project management system with real-time messaging capabilities.",
-                        assignedTo: ["Alex Hunt", "Jasmin Lowery"],
-                        createdAt: "2023-10-15",
-                        downloadUrl: "/files/design-specifications.pdf",
-                        status: "in-progress",
-                        membersCount: 23,
-                        onlineCount: 10
-                    };
-                    
-                    // Update UI with task data
-                    document.getElementById('task-name').textContent = task.name;
-                    document.getElementById('task-description').textContent = task.description;
-                    document.getElementById('task-assigned-to').textContent = task.assignedTo.join(', ');
-                    document.getElementById('task-created-at').textContent = task.createdAt;
-                    document.getElementById('task-id').value = task.id;
-                    document.getElementById('members-count').textContent = task.membersCount;
-                    document.getElementById('online-count').textContent = task.onlineCount;
-                    
-                    // Update task status
-                    const statusElement = document.getElementById('task-status');
-                    statusElement.textContent = task.status === 'completed' ? 'Completed' : 'In Progress';
-                    statusElement.className = task.status === 'completed' ? 
-                        'task-status status-completed' : 'task-status status-in-progress';
-                    
-                    // Show attachment if available
-                    if (task.downloadUrl || task.fileUrl) {
-                        const attachmentContainer = document.getElementById('task-attachment-container');
-                        const attachmentLink = document.getElementById('task-attachment-link');
-                        attachmentLink.href = task.downloadUrl || task.fileUrl;
-                        attachmentLink.textContent = 'Download';
-                        attachmentContainer.style.display = 'block';
-                    }
-                }, 500);
-                
-            } catch (error) {
-                console.error('Error loading task details:', error);
-            }
-        }
-
-        // Load comments from DynamoDB
-        async function loadComments() {
-            try {
-                // In a real app, you would fetch from your backend API
-                // const response = await fetch(`/api/tasks/${taskId}/comments`);
-                // const comments = await response.json();
-                
-                // Simulating API call with timeout
-                setTimeout(() => {
-                    // Mock comments data - replace with actual API response
-                    const comments = [
-                        {
-                            id: "comment1",
-                            CommentText: "I added new flows to our design system. Now you can use them for your projects!",
-                            UserID: "user456",
-                            UserName: "Jasmin Lowery",
-                            UserInitials: "JL",
-                            CreatedAt: "09:20",
-                            FileUrl: null,
-                            ReactionCount: 4,
-                            MentionCount: 23
-                        },
-                        {
-                            id: "comment2",
-                            CommentText: "Hey guys! Important news!",
-                            UserID: "user789",
-                            UserName: "Alex Hunt",
-                            UserInitials: "AH",
-                            CreatedAt: "09:24",
-                            FileUrl: null,
-                            ReactionCount: 16,
-                            MentionCount: 0
-                        },
-                        {
-                            id: "comment3",
-                            CommentText: "Our intern @jchurch has successfully completed his probationary period and is now part of our team!",
-                            UserID: "user789",
-                            UserName: "Alex Hunt",
-                            UserInitials: "AH",
-                            CreatedAt: "09:24",
-                            FileUrl: null,
-                            ReactionCount: 5,
-                            MentionCount: 2
-                        },
-                        {
-                            id: "comment4",
-                            CommentText: "Jaden, my congratulations! I will be glad to work with you on a new project",
-                            UserID: currentUser.id,
-                            UserName: currentUser.name,
-                            UserInitials: currentUser.initials,
-                            CreatedAt: "09:27",
-                            FileUrl: null,
-                            ReactionCount: 10,
-                            MentionCount: 0
-                        },
-                        {
-                            id: "comment5",
-                            CommentText: "Looking forward to seeing the new design flows. When will they be available in the component library?",
-                            UserID: "user101",
-                            UserName: "Jessie Rollins",
-                            UserInitials: "JR",
-                            CreatedAt: "09:30",
-                            FileUrl: "/files/component-updates.pdf",
-                            ReactionCount: 10,
-                            MentionCount: 0
-                        }
-                    ];
-                    
-                    displayComments(comments);
-                }, 800);
-                
-            } catch (error) {
-                console.error('Error loading comments:', error);
-                document.getElementById('comments-list').innerHTML = '<div class="no-comments">Error loading comments</div>';
-            }
-        }
-
-        // Display comments in the UI
-        function displayComments(comments) {
-            const commentsList = document.getElementById('comments-list');
-            
-            if (!comments || comments.length === 0) {
-                commentsList.innerHTML = '<div class="no-comments">No comments found.</div>';
-                return;
-            }
-            
-            let commentsHTML = '';
-            
-            comments.forEach(comment => {
-                const isCurrentUser = comment.UserID === currentUser.id;
-                const commentClass = isCurrentUser ? 'comment current-user' : 'comment other-user';
-                
-                let reactionHTML = '';
-                if (comment.ReactionCount > 0) {
-                    reactionHTML = `<div class="reaction-count">
-                        <span>👍</span> ${comment.ReactionCount}
-                        ${comment.MentionCount > 0 ? `<span>💬</span> @${comment.MentionCount}` : ''}
-                    </div>`;
-                }
-                
-                let attachmentHTML = '';
-                if (comment.FileUrl) {
-                    const fileName = comment.FileUrl.split('/').pop();
-                    attachmentHTML = `<div class="comment-attachment">
-                        <a href="${comment.FileUrl}" target="_blank"><i class="fas fa-paperclip"></i> ${fileName}</a>
-                    </div>`;
-                }
-                
-                commentsHTML += `
-                    <div class="${commentClass}" data-comment-id="${comment.id}">
-                        <div class="comment-header">
-                            ${isCurrentUser ? 
-                                `<div class="comment-time">${comment.CreatedAt}</div>
-                                 <div class="user-name">${comment.UserName}</div>
-                                 <div class="user-avatar">${comment.UserInitials}</div>` :
-                                `<div class="user-avatar">${comment.UserInitials}</div>
-                                 <div class="user-name">${comment.UserName}</div>
-                                 <div class="comment-time">${comment.CreatedAt}</div>`
-                            }
-                        </div>
-                        <div class="comment-content">
-                            <div class="comment-text">${comment.CommentText}</div>
-                            ${attachmentHTML}
-                        </div>
-                        ${reactionHTML}
-                    </div>
-                `;
-            });
-            
-            commentsList.innerHTML = commentsHTML;
-        }
-
         // Set up event listeners
         function setupEventListeners() {
-            // Handle form submission
+            // Handle form submission with AJAX
             document.getElementById('comment-form').addEventListener('submit', async function(e) {
                 e.preventDefault();
                 
+                const submitBtn = document.getElementById('submit-btn');
+                const formMessages = document.getElementById('form-messages');
                 const commentText = document.getElementById('comment-text').value;
                 const fileInput = document.getElementById('attachment');
                 const file = fileInput.files[0];
                 
-                if (!commentText.trim() && !file) return;
-                
-                // Create FormData for file upload
-                const formData = new FormData();
-                formData.append('taskId', document.getElementById('task-id').value);
-                formData.append('commentText', commentText);
-                if (file) {
-                    formData.append('attachment', file);
+                if (!commentText.trim() && !file) {
+                    showMessage('Please enter a comment or attach a file', 'error');
+                    return;
                 }
-                
+
+                // Disable submit button and show loading
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Submitting...';
+                formMessages.innerHTML = '';
+
                 try {
-                    // In a real app, you would send to your backend API
-                    // const response = await fetch('/api/comments', {
-                    //     method: 'POST',
-                    //     body: formData
-                    // });
-                    // const newComment = await response.json();
+                    // Create FormData for file upload
+                    const formData = new FormData(this);
                     
-                    // Simulating API call with timeout
-                    setTimeout(() => {
-                        // Mock new comment response
-                        const now = new Date();
-                        const timeString = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-                        
-                        const newComment = {
-                            id: 'comment' + Date.now(),
-                            CommentText: commentText,
-                            UserID: currentUser.id,
-                            UserName: currentUser.name,
-                            UserInitials: currentUser.initials,
-                            CreatedAt: timeString,
-                            FileUrl: file ? `/uploads/${file.name}` : null,
-                            ReactionCount: 0,
-                            MentionCount: 0
-                        };
-                        
-                        // Add new comment to UI
-                        addCommentToUI(newComment);
-                        
-                        // Clear the form
-                        document.getElementById('comment-form').reset();
-                        document.querySelector('.file-upload label').innerHTML = '<i class="fas fa-paperclip"></i> Add Attachment';
-                        
-                    }, 500);
+                    // Send to backend
+                    const response = await fetch('/add-comment', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        // Success - reload the page to show new comment
+                        showMessage('Comment added successfully!', 'success');
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1000);
+                    } else {
+                        const errorData = await response.json();
+                        throw new Error(errorData.message || 'Failed to add comment');
+                    }
                     
                 } catch (error) {
                     console.error('Error submitting comment:', error);
-                    alert('Error submitting comment. Please try again.');
+                    showMessage('Error submitting comment: ' + error.message, 'error');
+                } finally {
+                    // Re-enable submit button
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Submit Comment';
                 }
             });
             
@@ -637,69 +496,28 @@
             });
         }
 
-        // Add a new comment to the UI
-        function addCommentToUI(comment) {
-            const commentsList = document.getElementById('comments-list');
-            const noCommentsElement = commentsList.querySelector('.no-comments');
+        // Helper function to show messages
+        function showMessage(message, type) {
+            const formMessages = document.getElementById('form-messages');
+            const alertClass = type === 'error' ? 'alert-error' : 'alert-success';
+            formMessages.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
             
-            // Remove "no comments" message if it exists
-            if (noCommentsElement) {
-                noCommentsElement.remove();
+            // Auto-hide success messages after 3 seconds
+            if (type === 'success') {
+                setTimeout(() => {
+                    formMessages.innerHTML = '';
+                }, 3000);
             }
-            
-            // Remove loading message if it exists
-            const loadingElement = commentsList.querySelector('.loading');
-            if (loadingElement) {
-                loadingElement.remove();
-            }
-            
-            const isCurrentUser = comment.UserID === currentUser.id;
-            const commentClass = isCurrentUser ? 'comment current-user' : 'comment other-user';
-            
-            let attachmentHTML = '';
-            if (comment.FileUrl) {
-                const fileName = comment.FileUrl.split('/').pop();
-                attachmentHTML = `<div class="comment-attachment">
-                    <a href="${comment.FileUrl}" target="_blank"><i class="fas fa-paperclip"></i> ${fileName}</a>
-                </div>`;
-            }
-            
-            const commentHTML = `
-                <div class="${commentClass}" data-comment-id="${comment.id}">
-                    <div class="comment-header">
-                        ${isCurrentUser ? 
-                            `<div class="comment-time">${comment.CreatedAt}</div>
-                             <div class="user-name">${comment.UserName}</div>
-                             <div class="user-avatar">${comment.UserInitials}</div>` :
-                            `<div class="user-avatar">${comment.UserInitials}</div>
-                             <div class="user-name">${comment.UserName}</div>
-                             <div class="comment-time">${comment.CreatedAt}</div>`
-                        }
-                    </div>
-                    <div class="comment-content">
-                        <div class="comment-text">${comment.CommentText}</div>
-                        ${attachmentHTML}
-                    </div>
-                    <div class="reaction-count">
-                        <span>👍</span> 0
-                    </div>
-                </div>
-            `;
-            
-            commentsList.insertAdjacentHTML('beforeend', commentHTML);
-            
-            // Scroll to the new comment
-            const newComment = commentsList.lastElementChild;
-            newComment.scrollIntoView({ behavior: 'smooth' });
         }
 
-        // Helper function to extract task ID from URL
-        function getTaskIdFromUrl() {
-            // In a real app, you would extract from URL parameters or path
-            // For example: /tasks/123 -> returns "123"
-            const urlParams = new URLSearchParams(window.location.search);
-            return urlParams.get('taskId') || 'task123'; // Default for demo
+        // Auto-scroll to bottom of comments
+        function scrollToBottom() {
+            const commentsList = document.getElementById('comments-list');
+            commentsList.scrollTop = commentsList.scrollHeight;
         }
+
+        // Scroll to bottom when page loads (if there are comments)
+        window.addEventListener('load', scrollToBottom);
     </script>
 </body>
 </html>

@@ -4,6 +4,12 @@
     <div class="auth-card">
         <h2>Create Your Account</h2>
         
+        <% if (typeof success !== 'undefined' && success) { %>
+            <div class="alert alert-success">
+                <%= success %>
+            </div>
+        <% } %>
+        
         <% if (error) { %>
             <div class="alert alert-error">
                 <%= error %>

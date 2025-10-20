@@ -22,7 +22,7 @@ router.get("/login", (req, res) => {
   res.render("login", {
     title: "Login",
     error: null,
-    success: req.query.success || null,
+    success: req.query.success || null, // Fix this line
     user: req.session.user || null,
     formData: {},
   });
@@ -38,6 +38,7 @@ router.get("/register", (req, res) => {
     error: null,
     user: req.session.user || null,
     formData: {},
+    success: null // Add this
   });
 });
 
@@ -55,8 +56,7 @@ router.get("/dashboard", (req, res) => {
   });
 });
 
-//Added from here 
-
+// Create task page
 const fetchAllUsers = async (token) => {
   if (!AWS_API_URL) {
     console.warn("AWS_API_URL is not set. Returning dummy data.");
@@ -97,6 +97,7 @@ router.get("/create-task", async (req, res) => {
       user: req.session.user,
       users: [],
       message: "Error loading users for assignment. Please try again.",
+      success: null // Add this
     });
   }
 
@@ -105,9 +106,9 @@ router.get("/create-task", async (req, res) => {
     user: req.session.user,
     users: users,
     message: null,
+    success: null // Add this
   });
 });
-//To Here
 
 // Logout
 router.get("/logout", (req, res) => {

@@ -23,6 +23,43 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
 const s3 = new AWS.S3();
 const dynamodb = new AWS.DynamoDB.DocumentClient();
 
+// ========== HELPER FUNCTIONS ==========
+// Helper function to format time for comments
+function formatTime(dateString) {
+  try {
+      const date = new Date(dateString);
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+          // If invalid date, try to parse as time string
+          if (typeof dateString === 'string' && dateString.includes(':')) {
+              return dateString; // Return as-is if it looks like a time
+          }
+          return 'Unknown time';
+      }
+      return date.toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: false 
+      });
+  } catch (error) {
+      console.error('Error formatting time:', error);
+      return 'Unknown time';
+  }
+}
+
+// Helper function to get user initials
+function getInitials(username) {
+  if (!username || typeof username !== 'string') {
+      return 'U';
+  }
+  return username
+      .split(' ')
+      .map(name => name.charAt(0).toUpperCase())
+      .join('')
+      .substring(0, 2);
+}
+// ========== END HELPER FUNCTIONS ==========
+
 // Create task endpoint (expects fileKey if file uploaded via presigned URL)
 router.post("/create-task", async (req, res) => {
   if (!req.session.user) return res.redirect("/login");
@@ -311,6 +348,8 @@ router.get("/task/:taskId", async (req, res) => {
   comments = comments.map(comment => {
     if (comment.UserID && userMap[comment.UserID]) {
       comment.Username = userMap[comment.UserID];
+    } else {
+      comment.Username = 'User'; // Fallback username
     }
     return comment;
   });
@@ -351,6 +390,8 @@ router.get("/task/:taskId", async (req, res) => {
     user: req.session.user || null,
     task: task,
     comments: commentsWithUrls,
+    formatTime: formatTime, // Pass the helper function to the template
+    getInitials: getInitials // Pass the helper function to the template
   });
 });
 

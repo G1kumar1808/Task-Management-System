@@ -27,6 +27,47 @@ app.use(express.static(path.join(__dirname, "public")));
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
+// ========== ADD HELPER FUNCTIONS HERE ==========
+// Helper function to format time for comments
+function formatTime(dateString) {
+    try {
+        const date = new Date(dateString);
+        // Check if date is valid
+        if (isNaN(date.getTime())) {
+            // If invalid date, try to parse as time string
+            if (typeof dateString === 'string' && dateString.includes(':')) {
+                return dateString; // Return as-is if it looks like a time
+            }
+            return 'Unknown time';
+        }
+        return date.toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false 
+        });
+    } catch (error) {
+        console.error('Error formatting time:', error);
+        return 'Unknown time';
+    }
+}
+
+// Helper function to get user initials
+function getInitials(username) {
+    if (!username || typeof username !== 'string') {
+        return 'U';
+    }
+    return username
+        .split(' ')
+        .map(name => name.charAt(0).toUpperCase())
+        .join('')
+        .substring(0, 2);
+}
+
+// Make these available to EJS templates
+app.locals.formatTime = formatTime;
+app.locals.getInitials = getInitials;
+// ========== END HELPER FUNCTIONS ==========
+
 // Routes
 app.use("/", require("./routes/pages"));
 app.use("/auth", require("./routes/auth"));
