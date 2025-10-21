@@ -74,6 +74,7 @@
             display: flex;
             gap: 10px;
             margin-bottom: 20px;
+            flex-wrap: wrap;
         }
         
         .btn {
@@ -117,6 +118,15 @@
         .btn-outline:hover {
             background: #3498db;
             color: white;
+        }
+        
+        .btn-warning {
+            background: #f39c12;
+            color: white;
+        }
+        
+        .btn-warning:hover {
+            background: #e67e22;
         }
         
         /* Comments section styles */
@@ -211,8 +221,13 @@
             margin-bottom: 8px;
         }
         
-        .comment-attachment {
+        .comment-attachments {
             margin-top: 8px;
+        }
+        
+        .comment-attachment {
+            display: block;
+            margin-bottom: 5px;
         }
         
         .comment-attachment a {
@@ -222,9 +237,14 @@
             display: inline-flex;
             align-items: center;
             gap: 5px;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 4px;
+            transition: background-color 0.3s;
         }
         
         .comment-attachment a:hover {
+            background: rgba(255, 255, 255, 0.9);
             text-decoration: underline;
         }
         
@@ -293,6 +313,43 @@
         
         .file-upload input[type="file"] {
             display: none;
+        }
+        
+        .selected-files {
+            margin-top: 10px;
+        }
+        
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        
+        .file-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        .remove-file {
+            background: none;
+            border: none;
+            color: #dc3545;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .remove-file:hover {
+            color: #c82333;
         }
         
         .submit-btn {
@@ -442,6 +499,14 @@
             100% { transform: rotate(360deg); }
         }
         
+        /* Edit button specific styles */
+        .edit-indicator {
+            font-size: 12px;
+            color: #7f8c8d;
+            font-style: italic;
+            margin-left: 10px;
+        }
+        
         /* Responsive adjustments */
         @media (max-width: 768px) {
             .comment {
@@ -475,11 +540,22 @@
 
     <div class="container">
         <h1>
-            <span><%= task.name %> <span class="task-status status-in-progress">In Progress</span></span>
+            <span>
+                <%= task.name %> 
+                <span class="task-status status-in-progress">In Progress</span>
+                <% if (user && user.userId === task.createdBy) { %>
+                    <span class="edit-indicator">(You created this task)</span>
+                <% } %>
+            </span>
             <div class="action-buttons">
                 <a href="/view-tasks" class="btn btn-secondary">
                     <i class="fas fa-arrow-left"></i> Back to Tasks
                 </a>
+                <% if (user && user.userId === task.createdBy) { %>
+                    <a href="/edit-task/<%= task.id %>" class="btn btn-warning">
+                        <i class="fas fa-edit"></i> Edit Task
+                    </a>
+                <% } %>
                 <a href="/task/<%= task.id %>/files" class="btn btn-primary">
                     <i class="fas fa-folder"></i> View Files
                 </a>
@@ -495,7 +571,8 @@
                     No one assigned
                 <% } %>
             </p>
-            <p><strong>Created at:</strong> <%= task.createdAt %></p>
+            <p><strong>Created at:</strong> <%= new Date(task.createdAt).toLocaleString() %></p>
+            <p><strong>Created by:</strong> <%= task.createdByUsername || 'Unknown' %></p>
             <% if (task.fileKey || task.fileUrl) { %>
                 <p><strong>Task Attachment:</strong> 
                     <button class="btn btn-outline download-task-file-btn" 
@@ -535,14 +612,32 @@
                             </div>
                             <div class="comment-content">
                                 <div class="comment-text"><%= comment.CommentText %></div>
-                                <% if (comment.FileKey || comment.FileUrl) { %>
-                                    <div class="comment-attachment">
-                                        <button class="download-comment-file-btn" 
-                                                data-comment-id="<%= comment.CommentID %>"
-                                                data-task-id="<%= task.id %>"
-                                                data-file-name="<%= comment.CommentText ? comment.CommentText.substring(0, 20) + '...' : 'Attachment' %>">
-                                            <i class="fas fa-paperclip"></i> Download Attachment
-                                        </button>
+                                <% if (comment.FileKeys && comment.FileKeys.length > 0) { %>
+                                    <div class="comment-attachments">
+                                        <% comment.FileKeys.forEach((fileKey, index) => { %>
+                                            <div class="comment-attachment">
+                                                <button class="download-comment-file-btn" 
+                                                        data-comment-id="<%= comment.CommentID %>"
+                                                        data-task-id="<%= task.id %>"
+                                                        data-file-index="<%= index %>"
+                                                        data-file-name="<%= comment.FileNames && comment.FileNames[index] ? comment.FileNames[index] : 'Attachment' + (index + 1) %>">
+                                                    <i class="fas fa-paperclip"></i> 
+                                                    <%= comment.FileNames && comment.FileNames[index] ? comment.FileNames[index] : 'Attachment ' + (index + 1) %>
+                                                </button>
+                                            </div>
+                                        <% }); %>
+                                    </div>
+                                <% } else if (comment.FileKey || comment.FileUrl) { %>
+                                    <!-- Legacy single file support -->
+                                    <div class="comment-attachments">
+                                        <div class="comment-attachment">
+                                            <button class="download-comment-file-btn" 
+                                                    data-comment-id="<%= comment.CommentID %>"
+                                                    data-task-id="<%= task.id %>"
+                                                    data-file-name="<%= comment.CommentText ? comment.CommentText.substring(0, 20) + '...' : 'Attachment' %>">
+                                                <i class="fas fa-paperclip"></i> Download Attachment
+                                            </button>
+                                        </div>
                                     </div>
                                 <% } %>
                             </div>
@@ -556,14 +651,15 @@
                 <div id="form-messages"></div>
                 <form id="comment-form" action="/add-comment" method="post" enctype="multipart/form-data">
                     <input type="hidden" name="taskId" value="<%= task.id %>">
-                    <textarea name="commentText" id="comment-text" rows="4" placeholder="Enter your comment" required></textarea>
+                    <textarea name="commentText" id="comment-text" rows="4" placeholder="Enter your comment"></textarea>
                     <div class="file-upload">
-                        <label for="attachment">
+                <label for="attachments">
                             <i class="fas fa-paperclip"></i> 
-                            <span id="file-label">Add Attachment</span>
+                            <span id="file-label">Add Attachments (Multiple files allowed)</span>
                         </label>
-                        <input type="file" name="attachment" id="attachment" accept="*/*">
+                    <input type="file" name="attachments" id="attachments" accept="*/*" multiple>
                     </div>
+                    <div class="selected-files" id="selected-files"></div>
                     <button type="submit" class="submit-btn" id="submit-btn">
                         <i class="fas fa-paper-plane"></i> Submit Comment
                     </button>
@@ -594,11 +690,11 @@
                 const submitBtn = document.getElementById('submit-btn');
                 const formMessages = document.getElementById('form-messages');
                 const commentText = document.getElementById('comment-text').value;
-                const fileInput = document.getElementById('attachment');
-                const file = fileInput.files[0];
+                    const fileInput = document.getElementById('attachments');
+                const files = fileInput.files;
                 
-                if (!commentText.trim() && !file) {
-                    showMessage('Please enter a comment or attach a file', 'error');
+                if (!commentText.trim() && files.length === 0) {
+                    showMessage('Please enter a comment or attach at least one file', 'error');
                     return;
                 }
 
@@ -638,10 +734,36 @@
                 }
             });
             
-            // Handle file input display
-            document.getElementById('attachment').addEventListener('change', function(e) {
-                const fileName = e.target.files[0] ? e.target.files[0].name : 'Add Attachment';
-                document.getElementById('file-label').textContent = fileName;
+            // Handle multiple file input display
+            document.getElementById('attachments').addEventListener('change', function(e) {
+                const selectedFilesContainer = document.getElementById('selected-files');
+                selectedFilesContainer.innerHTML = '';
+                
+                if (this.files.length > 0) {
+                    document.getElementById('file-label').textContent = `${this.files.length} file(s) selected`;
+                    
+                    Array.from(this.files).forEach((file, index) => {
+                        const fileItem = document.createElement('div');
+                        fileItem.className = 'file-item';
+                        fileItem.innerHTML = `
+                            <span>${file.name}</span>
+                            <button type="button" class="remove-file" data-index="${index}">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        `;
+                        selectedFilesContainer.appendChild(fileItem);
+                    });
+                    
+                    // Add event listeners to remove buttons
+                    document.querySelectorAll('.remove-file').forEach(btn => {
+                        btn.addEventListener('click', function() {
+                            const index = parseInt(this.getAttribute('data-index'));
+                            removeFileFromInput(index);
+                        });
+                    });
+                } else {
+                    document.getElementById('file-label').textContent = 'Add Attachments (Multiple files allowed)';
+                }
             });
 
             // Handle task file download
@@ -660,26 +782,54 @@
                     const taskId = this.getAttribute('data-task-id');
                     const commentId = this.getAttribute('data-comment-id');
                     const fileName = this.getAttribute('data-file-name') || 'attachment';
+                    const fileIndex = this.getAttribute('data-file-index');
                     
-                    await downloadFile(taskId, fileName, 'comment', commentId);
+                    // Ensure fileIndex is passed as integer when present
+                    await downloadFile(taskId, fileName, 'comment', commentId, fileIndex !== null ? fileIndex : null);
                 });
             });
         }
 
+        // Remove file from input
+        function removeFileFromInput(index) {
+            const fileInput = document.getElementById('attachments');
+            const files = Array.from(fileInput.files);
+            files.splice(index, 1);
+            
+            // Create new FileList (we need to use DataTransfer as FileList is read-only)
+            const dataTransfer = new DataTransfer();
+            files.forEach(file => dataTransfer.items.add(file));
+            fileInput.files = dataTransfer.files;
+            
+            // Trigger change event to update UI
+            const event = new Event('change');
+            fileInput.dispatchEvent(event);
+        }
+
         // Download file functionality
-        async function downloadFile(taskId, fileName, type = 'task', commentId = null) {
+        async function downloadFile(taskId, fileName, type = 'task', commentId = null, fileIndex = null) {
             const loadingSpinner = document.getElementById('loadingSpinner');
             
             // Show loading spinner
             loadingSpinner.style.display = 'flex';
             
             try {
-                console.log(`Requesting download for ${type}:`, taskId, commentId);
+                console.log(`Requesting download for ${type}:`, taskId, commentId, fileIndex);
                 
                 // Build URL based on download type
                 let url = `/download-file/${taskId}`;
+                const params = new URLSearchParams();
+                
                 if (type === 'comment' && commentId) {
-                    url += `?commentId=${commentId}`;
+                    params.append('commentId', commentId);
+                }
+                
+                if (fileIndex !== null) {
+                    params.append('fileIndex', fileIndex);
+                }
+                
+                if (params.toString()) {
+                    url += `?${params.toString()}`;
                 }
                 
                 // Get fresh download URL from server

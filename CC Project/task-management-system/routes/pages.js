@@ -22,7 +22,7 @@ router.get("/login", (req, res) => {
   res.render("login", {
     title: "Login",
     error: null,
-    success: req.query.success || null, // Fix this line
+    success: req.query.success || null,
     user: req.session.user || null,
     formData: {},
   });
@@ -38,7 +38,7 @@ router.get("/register", (req, res) => {
     error: null,
     user: req.session.user || null,
     formData: {},
-    success: null // Add this
+    success: null
   });
 });
 
