@@ -1079,4 +1079,173 @@ router.get("/presign-download", async (req, res) => {
   }
 });
 
+// DELETE /delete-task/:taskId
+router.delete('/delete-task/:taskId', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'Unauthorized' });
+  const taskId = req.params.taskId;
+  try {
+    // 1) Resolve the task record (local store -> backend API -> DynamoDB)
+    let tasks = await getTasks();
+    if (AWS_API_URL) {
+      try {
+        const resp = await axios.get(`${AWS_API_URL}/tasks`, {
+          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+        });
+        if (resp.data && Array.isArray(resp.data.tasks)) {
+          const backend = resp.data.tasks.map((it) => ({
+            id: it.TaskID || it.id || it.taskId,
+            name: it.Name || it.name || it.taskName,
+            description: it.Description || it.description || it.taskDescription,
+            createdBy: it.CreatedBy || it.createdBy,
+            assignedTo: it.AssignedTo || it.assignedTo || [],
+            fileKey: it.FileKey || it.fileKey || null,
+            fileUrl: it.FileUrl || it.fileUrl || null,
+            createdAt: it.CreatedAt || it.createdAt,
+          }));
+          tasks = backend;
+        }
+      } catch (err) {
+        console.warn('Failed to fetch tasks from AWS API for delete:', err.message);
+      }
+    }
+
+    let task = tasks.find(t => t.id === taskId);
+
+    // fallback to DynamoDB get
+    const TASKS_TABLE = process.env.TASKS_TABLE || 'TasksTable';
+    const COMMENTS_TABLE = process.env.COMMENTS_TABLE || 'CommentsTable';
+    if (!task && dynamodb) {
+      try {
+        const getResp = await dynamodb.get({ TableName: TASKS_TABLE, Key: { TaskID: taskId } }).promise();
+        if (getResp && getResp.Item) {
+          const it = getResp.Item;
+          task = {
+            id: it.TaskID,
+            name: it.Name,
+            description: it.Description,
+            createdBy: it.CreatedBy,
+            assignedTo: it.AssignedTo || [],
+            fileKey: it.FileKey || null,
+            fileUrl: it.FileUrl || null,
+            createdAt: it.CreatedAt || new Date().toISOString(),
+          };
+        }
+      } catch (err) {
+        console.warn('DynamoDB lookup for task failed during delete:', err.message || err);
+      }
+    }
+
+    if (!task) {
+      // If task cannot be found, treat as not found
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    // 2) Collect S3 keys: task.fileKey + comment.FileKeys[]
+    const keysToDelete = [];
+    if (task.fileKey) keysToDelete.push(task.fileKey);
+
+    // Fetch comments for this task to collect attachments and comment IDs
+    let comments = [];
+    try {
+      if (dynamodb) {
+        const commentsResult = await dynamodb.scan({
+          TableName: COMMENTS_TABLE,
+          FilterExpression: 'TaskID = :taskId',
+          ExpressionAttributeValues: { ':taskId': taskId }
+        }).promise();
+        comments = commentsResult.Items || [];
+      }
+    } catch (err) {
+      console.warn('Failed to fetch comments for delete:', err.message || err);
+    }
+
+    const commentIdsToDelete = [];
+    for (const c of comments) {
+      commentIdsToDelete.push(c.CommentID);
+      if (c.FileKeys && Array.isArray(c.FileKeys)) {
+        for (const fk of c.FileKeys) if (fk) keysToDelete.push(fk);
+      } else if (c.FileKey) {
+        keysToDelete.push(c.FileKey);
+      }
+    }
+
+    // 3) Delete S3 objects (if configured and keys exist)
+    if (S3_BUCKET && keysToDelete.length > 0) {
+      try {
+        // Dynamo S3 deleteObjects accepts up to 1000 objects; batch if needed
+        const batches = [];
+        for (let i = 0; i < keysToDelete.length; i += 1000) {
+          batches.push(keysToDelete.slice(i, i + 1000));
+        }
+        for (const batch of batches) {
+          const params = {
+            Bucket: S3_BUCKET,
+            Delete: { Objects: batch.map(k => ({ Key: k })) }
+          };
+          try {
+            await s3.deleteObjects(params).promise();
+          } catch (err) {
+            console.warn('Failed to delete some S3 objects during task delete:', err.message || err);
+          }
+        }
+      } catch (err) {
+        console.warn('S3 deletion error:', err.message || err);
+      }
+    }
+
+    // 4) Delete CommentsTable items (batch delete if using DynamoDB)
+    if (dynamodb && commentIdsToDelete.length > 0) {
+      try {
+        // DynamoDB BatchWrite supports up to 25 items per request
+        const batches = [];
+        for (let i = 0; i < commentIdsToDelete.length; i += 25) {
+          batches.push(commentIdsToDelete.slice(i, i + 25));
+        }
+        for (const batch of batches) {
+          const reqItems = {};
+          reqItems[COMMENTS_TABLE] = batch.map(id => ({ DeleteRequest: { Key: { CommentID: id } } }));
+          await dynamodb.batchWrite({ RequestItems: reqItems }).promise();
+        }
+      } catch (err) {
+        console.warn('Failed to delete comments from DynamoDB during task delete:', err.message || err);
+      }
+    } else if (commentIdsToDelete.length > 0) {
+      // If no DynamoDB, try to remove from in-memory if getTasks() returned comments somewhere else (best-effort)
+      // nothing to do here in fallback
+    }
+
+    // 5) Delete task item from TasksTable or in-memory
+    try {
+      if (dynamodb && process.env.TASKS_TABLE) {
+        await dynamodb.delete({ TableName: TASKS_TABLE, Key: { TaskID: taskId } }).promise();
+      } else {
+        // Fallback: remove from in-memory tasks array returned by getTasks()
+        const inMem = await getTasks();
+        const idx = inMem.findIndex(t => t.id === taskId);
+        if (idx !== -1) inMem.splice(idx, 1);
+      }
+    } catch (err) {
+      console.warn('Failed to delete task item from storage during task delete:', err.message || err);
+    }
+
+    // 6) Optionally inform backend API about deletion
+    if (AWS_API_URL) {
+      try {
+        await axios.delete(`${AWS_API_URL}/tasks/${encodeURIComponent(taskId)}`, {
+          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+        });
+      } catch (err) {
+        // non-fatal
+        console.warn('Failed to notify backend API of task deletion:', err.message || err);
+      }
+    }
+
+    // Respond with success and instruction to redirect to dashboard
+    return res.json({ success: true, redirect: '/dashboard' });
+  } catch (err) {
+    console.error('Delete task failed:', err);
+    res.status(500).json({ error: 'Failed to delete task' });
+  }
+});
+
 module.exports = router;
