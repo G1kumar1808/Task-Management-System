@@ -203,10 +203,17 @@
             display: inline-flex;
             align-items: center;
             gap: 5px;
+            border: none;
+            cursor: pointer;
         }
         
         .download-btn:hover {
             background: #219653;
+        }
+        
+        .download-btn:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
         }
         
         .no-files {
@@ -225,6 +232,43 @@
         .file-type-comment {
             background: #e3f2fd;
             color: #3498db;
+        }
+        
+        /* Loading Spinner */
+        .loading-spinner {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        
+        .spinner-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
         
         /* Responsive adjustments */
@@ -261,6 +305,14 @@
     </style>
 </head>
 <body>
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="loading-spinner">
+        <div class="spinner-content">
+            <div class="spinner"></div>
+            <p>Generating download link...</p>
+        </div>
+    </div>
+
     <div class="container">
         <h1>
             <span>Files - <%= task.name %></span>
@@ -310,9 +362,11 @@
                                 </div>
                             </div>
                             <div class="file-actions">
-                                <a href="<%= file.downloadUrl %>" class="download-btn" target="_blank" download>
+                                <button class="download-btn" 
+                                        data-file-key="<%= file.fileKey %>"
+                                        data-file-name="<%= file.name %>">
                                     <i class="fas fa-download"></i> Download
-                                </a>
+                                </button>
                             </div>
                         </div>
                     <% }); %>
@@ -322,9 +376,60 @@
     </div>
 
     <script>
-        // Add any JavaScript functionality here if needed
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('Files page loaded');
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            
+            // Handle file downloads
+            document.querySelectorAll('.download-btn').forEach(btn => {
+                btn.addEventListener('click', async function() {
+                    const fileKey = this.getAttribute('data-file-key');
+                    const fileName = this.getAttribute('data-file-name') || 'download';
+                    
+                    // Show loading spinner
+                    loadingSpinner.style.display = 'flex';
+                    this.disabled = true;
+                    this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Downloading...';
+                    
+                    try {
+                        console.log('Requesting download for file:', fileKey);
+                        
+                        // Get fresh download URL from server using the direct download endpoint
+                        const response = await fetch(`/download/${encodeURIComponent(fileKey)}`);
+                        
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                        }
+                        
+                        const data = await response.json();
+                        
+                        if (data.downloadUrl) {
+                            console.log('Download URL received, starting download...');
+                            
+                            // Create a temporary anchor element to trigger download
+                            const a = document.createElement('a');
+                            a.href = data.downloadUrl;
+                            a.download = fileName;
+                            a.target = '_blank';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            
+                            console.log('Download initiated successfully');
+                        } else {
+                            throw new Error('No download URL received from server');
+                        }
+                    } catch (error) {
+                        console.error('Download error:', error);
+                        alert('Failed to download file: ' + error.message);
+                    } finally {
+                        // Hide loading spinner and reset button
+                        loadingSpinner.style.display = 'none';
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fas fa-download"></i> Download';
+                    }
+                });
+            });
         });
     </script>
 </body>

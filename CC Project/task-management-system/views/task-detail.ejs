@@ -230,7 +230,7 @@
             margin-bottom: 5px;
         }
         
-        .comment-attachment a {
+        .comment-attachment button {
             color: #3498db;
             text-decoration: none;
             font-size: 14px;
@@ -241,11 +241,19 @@
             background: rgba(255, 255, 255, 0.7);
             border-radius: 4px;
             transition: background-color 0.3s;
+            border: none;
+            cursor: pointer;
         }
         
-        .comment-attachment a:hover {
+        .comment-attachment button:hover {
             background: rgba(255, 255, 255, 0.9);
             text-decoration: underline;
+        }
+        
+        .comment-attachment button:disabled {
+            background: #f8f9fa;
+            color: #6c757d;
+            cursor: not-allowed;
         }
         
         .reaction-count {
@@ -683,6 +691,8 @@
 
         // Set up event listeners
         function setupEventListeners() {
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            
             // Handle form submission with AJAX
             document.getElementById('comment-form').addEventListener('submit', async function(e) {
                 e.preventDefault();
@@ -772,7 +782,49 @@
                     const taskId = this.getAttribute('data-task-id');
                     const fileName = this.getAttribute('data-file-name') || 'download';
                     
-                    await downloadFile(taskId, fileName, 'task');
+                    // Show loading spinner
+                    loadingSpinner.style.display = 'flex';
+                    this.disabled = true;
+                    this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Downloading...';
+                    
+                    try {
+                        console.log('Requesting download for task:', taskId);
+                        
+                        // Get fresh download URL from server
+                        const response = await fetch(`/download-file/${taskId}`);
+                        
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                        }
+                        
+                        const data = await response.json();
+                        
+                        if (data.downloadUrl) {
+                            console.log('Download URL received, starting download...');
+                            
+                            // Create a temporary anchor element to trigger download
+                            const a = document.createElement('a');
+                            a.href = data.downloadUrl;
+                            a.download = fileName;
+                            a.target = '_blank';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            
+                            console.log('Download initiated successfully');
+                        } else {
+                            throw new Error('No download URL received from server');
+                        }
+                    } catch (error) {
+                        console.error('Download error:', error);
+                        alert('Failed to download file: ' + error.message);
+                    } finally {
+                        // Hide loading spinner and reset button
+                        loadingSpinner.style.display = 'none';
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fas fa-download"></i> Download File';
+                    }
                 });
             });
 
@@ -784,8 +836,65 @@
                     const fileName = this.getAttribute('data-file-name') || 'attachment';
                     const fileIndex = this.getAttribute('data-file-index');
                     
-                    // Ensure fileIndex is passed as integer when present
-                    await downloadFile(taskId, fileName, 'comment', commentId, fileIndex !== null ? fileIndex : null);
+                    // Show loading spinner
+                    loadingSpinner.style.display = 'flex';
+                    this.disabled = true;
+                    this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Downloading...';
+                    
+                    try {
+                        console.log(`Requesting download for comment:`, taskId, commentId, fileIndex);
+                        
+                        // Build URL based on download type
+                        let url = `/download-file/${taskId}`;
+                        const params = new URLSearchParams();
+                        
+                        if (commentId) {
+                            params.append('commentId', commentId);
+                        }
+                        
+                        if (fileIndex !== null) {
+                            params.append('fileIndex', fileIndex);
+                        }
+                        
+                        if (params.toString()) {
+                            url += `?${params.toString()}`;
+                        }
+                        
+                        // Get fresh download URL from server
+                        const response = await fetch(url);
+                        
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                        }
+                        
+                        const data = await response.json();
+                        
+                        if (data.downloadUrl) {
+                            console.log('Download URL received, starting download...');
+                            
+                            // Create a temporary anchor element to trigger download
+                            const a = document.createElement('a');
+                            a.href = data.downloadUrl;
+                            a.download = fileName;
+                            a.target = '_blank';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            
+                            console.log('Download initiated successfully');
+                        } else {
+                            throw new Error('No download URL received from server');
+                        }
+                    } catch (error) {
+                        console.error('Download error:', error);
+                        alert('Failed to download file: ' + error.message);
+                    } finally {
+                        // Hide loading spinner and reset button
+                        loadingSpinner.style.display = 'none';
+                        this.disabled = false;
+                        this.innerHTML = '<i class="fas fa-paperclip"></i> ' + fileName;
+                    }
                 });
             });
         }
@@ -804,67 +913,6 @@
             // Trigger change event to update UI
             const event = new Event('change');
             fileInput.dispatchEvent(event);
-        }
-
-        // Download file functionality
-        async function downloadFile(taskId, fileName, type = 'task', commentId = null, fileIndex = null) {
-            const loadingSpinner = document.getElementById('loadingSpinner');
-            
-            // Show loading spinner
-            loadingSpinner.style.display = 'flex';
-            
-            try {
-                console.log(`Requesting download for ${type}:`, taskId, commentId, fileIndex);
-                
-                // Build URL based on download type
-                let url = `/download-file/${taskId}`;
-                const params = new URLSearchParams();
-                
-                if (type === 'comment' && commentId) {
-                    params.append('commentId', commentId);
-                }
-                
-                if (fileIndex !== null) {
-                    params.append('fileIndex', fileIndex);
-                }
-                
-                if (params.toString()) {
-                    url += `?${params.toString()}`;
-                }
-                
-                // Get fresh download URL from server
-                const response = await fetch(url);
-                
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                
-                if (data.downloadUrl) {
-                    console.log('Download URL received, starting download...');
-                    
-                    // Create a temporary anchor element to trigger download
-                    const a = document.createElement('a');
-                    a.href = data.downloadUrl;
-                    a.download = fileName;
-                    a.target = '_blank';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    
-                    console.log('Download initiated successfully');
-                } else {
-                    throw new Error('No download URL received from server');
-                }
-            } catch (error) {
-                console.error('Download error:', error);
-                alert('Failed to download file: ' + error.message);
-            } finally {
-                // Hide loading spinner
-                loadingSpinner.style.display = 'none';
-            }
         }
 
         // Helper function to show messages

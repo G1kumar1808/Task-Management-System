@@ -87,7 +87,6 @@
                             <% if (task.fileKey || task.fileUrl) { %>
                                 <button class="btn btn-outline download-btn" 
                                         data-task-id="<%= task.id %>"
-                                        data-file-key="<%= task.fileKey %>"
                                         data-file-name="<%= task.name %>">
                                     📎 Download Attachment
                                 </button>
@@ -95,7 +94,9 @@
                             <% if (task.id) { %>
                                 <a href="/task/<%= task.id %>" class="btn btn-secondary">View Details</a>
                                 <a href="/task/<%= task.id %>/files" class="btn btn-outline">📁 Files</a>
-                                <a href="/edit-task/<%= task.id %>" class="btn btn-primary">✏️ Edit</a>
+                                <% if (user && user.userId === task.createdBy) { %>
+                                    <a href="/edit-task/<%= task.id %>" class="btn btn-primary">✏️ Edit</a>
+                                <% } %>
                             <% } %>
                         </div>
 
@@ -266,6 +267,12 @@
     .task-actions .btn {
         padding: 0.6rem 1.2rem;
         font-size: 0.9rem;
+    }
+
+    .task-actions .download-btn:disabled {
+        background: var(--gray-light);
+        color: var(--gray);
+        cursor: not-allowed;
     }
 
     /* Task Additional Info */
@@ -451,14 +458,16 @@
             });
         }
 
-        // Download file functionality - FIXED VERSION
+        // Download file functionality - IMPROVED VERSION
         document.querySelectorAll('.download-btn').forEach(btn => {
             btn.addEventListener('click', async function() {
                 const taskId = this.getAttribute('data-task-id');
                 const fileName = this.getAttribute('data-file-name') || 'download';
                 
-                // Show loading spinner
+                // Show loading spinner and disable button
                 loadingSpinner.style.display = 'flex';
+                this.disabled = true;
+                this.innerHTML = '📎 Downloading...';
                 
                 try {
                     console.log('Requesting download for task:', taskId);
@@ -493,8 +502,10 @@
                     console.error('Download error:', error);
                     alert('Failed to download file: ' + error.message);
                 } finally {
-                    // Hide loading spinner
+                    // Hide loading spinner and reset button
                     loadingSpinner.style.display = 'none';
+                    this.disabled = false;
+                    this.innerHTML = '📎 Download Attachment';
                 }
             });
         });

@@ -80,10 +80,11 @@ function getInitials(username) {
 // Helper function to get user map
 async function getUserMap(token) {
   let userMap = {};
-  if (AWS_API_URL) {
+  if (AWS_API_URL && token) {
     try {
       const usersResponse = await axios.get(`${AWS_API_URL}/users`, {
         headers: { Authorization: `Bearer ${token}` },
+        timeout: 5000
       });
       if (usersResponse.data && usersResponse.data.users) {
         usersResponse.data.users.forEach(user => {
@@ -92,12 +93,13 @@ async function getUserMap(token) {
       }
     } catch (err) {
       console.warn('Could not fetch users for mapping:', err.message);
+      // Return empty map instead of failing
     }
   }
   return userMap;
 }
 
-// Function to generate fresh download URL
+// Function to generate fresh download URL with longer expiry
 async function generateFreshDownloadUrl(fileKey) {
   if (!fileKey || !S3_BUCKET) {
     return null;
@@ -107,13 +109,104 @@ async function generateFreshDownloadUrl(fileKey) {
     const signedUrl = await s3.getSignedUrlPromise("getObject", {
       Bucket: S3_BUCKET,
       Key: fileKey,
-      Expires: 900, // 15 minutes - longer expiry for downloads
+      Expires: 3600, // 1 hour - longer expiry for downloads
     });
     return signedUrl;
   } catch (err) {
     console.warn("Failed to generate fresh download URL for", fileKey, err.message);
     return null;
   }
+}
+
+// Function to fetch tasks from backend API with proper error handling
+async function fetchTasksFromBackend(token) {
+  if (!AWS_API_URL || !token) {
+    return null;
+  }
+  
+  try {
+    const resp = await axios.get(`${AWS_API_URL}/tasks`, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 10000
+    });
+    
+    if (resp.data && Array.isArray(resp.data.tasks)) {
+      return resp.data.tasks.map((it) => ({
+        id: it.TaskID || it.id || it.taskId,
+        name: it.Name || it.name || it.taskName,
+        description: it.Description || it.description || it.taskDescription,
+        createdBy: it.CreatedBy || it.createdBy,
+        assignedTo: it.AssignedTo || it.assignedTo || [],
+        fileKey: it.FileKey || it.fileKey || null,
+        fileUrl: it.FileUrl || it.fileUrl || null,
+        createdAt: it.CreatedAt || it.createdAt,
+      }));
+    }
+  } catch (err) {
+    if (err.response && err.response.status === 403) {
+      console.warn('AWS API returned 403 - token expired or invalid permissions');
+    } else if (err.code === 'ECONNREFUSED') {
+      console.warn('AWS API connection refused - service may be down');
+    } else {
+      console.warn('Failed to fetch tasks from AWS API:', err.message);
+    }
+  }
+  
+  return null;
+}
+
+// Function to get task by ID from multiple sources
+async function getTaskById(taskId, token) {
+  // Try backend API first
+  if (AWS_API_URL && token) {
+    try {
+      const backendTasks = await fetchTasksFromBackend(token);
+      if (backendTasks) {
+        const task = backendTasks.find(t => t.id === taskId);
+        if (task) return task;
+      }
+    } catch (err) {
+      console.warn('Failed to get task from backend API:', err.message);
+    }
+  }
+  
+  // Try local store
+  try {
+    const localTasks = await getTasks();
+    const task = localTasks.find(t => t.id === taskId);
+    if (task) return task;
+  } catch (err) {
+    console.warn('Failed to get task from local store:', err.message);
+  }
+  
+  // Try DynamoDB directly as last resort
+  if (dynamodb) {
+    const TASKS_TABLE = process.env.TASKS_TABLE || 'TasksTable';
+    try {
+      const getResp = await dynamodb.get({ 
+        TableName: TASKS_TABLE, 
+        Key: { TaskID: taskId } 
+      }).promise();
+      
+      if (getResp && getResp.Item) {
+        const it = getResp.Item;
+        return {
+          id: it.TaskID,
+          name: it.Name,
+          description: it.Description,
+          createdBy: it.CreatedBy,
+          assignedTo: it.AssignedTo || [],
+          fileKey: it.FileKey || null,
+          fileUrl: it.FileUrl || null,
+          createdAt: it.CreatedAt || new Date().toISOString(),
+        };
+      }
+    } catch (err) {
+      console.warn('DynamoDB lookup for task failed:', err.message);
+    }
+  }
+  
+  return null;
 }
 // ========== END HELPER FUNCTIONS ==========
 
@@ -159,7 +252,7 @@ router.post("/create-task", async (req, res) => {
       }
 
     // Optionally forward to AWS API if configured. Map fields to backend expected shape.
-    if (AWS_API_URL) {
+    if (AWS_API_URL && req.session.user?.token) {
       const payload = {
         TaskID: newTask.id,
         Name: newTask.name,
@@ -172,11 +265,12 @@ router.post("/create-task", async (req, res) => {
       };
       try {
         await axios.post(`${AWS_API_URL}/tasks`, payload, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ""}` },
+          headers: { Authorization: `Bearer ${req.session.user.token}` },
+          timeout: 10000
         });
       } catch (err) {
         if (err.response && err.response.status === 403) {
-          console.warn('Failed to forward task to AWS API: 403 Forbidden - token or permissions issue');
+          console.warn('Failed to forward task to AWS API: 403 Forbidden - token expired');
         } else {
           console.warn('Failed to forward task to AWS API:', err.message);
         }
@@ -200,38 +294,15 @@ router.get("/view-tasks", async (req, res) => {
   if (!req.session.user) return res.redirect("/login");
   
   try {
-    // Fetch tasks from local store first
+    // Fetch tasks from local store first (fallback)
     let tasks = await getTasks();
 
-    // If there's a backend API configured, try to fetch authoritative tasks
-    if (AWS_API_URL) {
-      try {
-        const resp = await axios.get(`${AWS_API_URL}/tasks`, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
-        });
-        if (resp.data && Array.isArray(resp.data.tasks)) {
-          // map backend tasks to internal shape
-          const backend = resp.data.tasks.map((it) => ({
-            id: it.TaskID || it.id || it.taskId,
-            name: it.Name || it.name || it.taskName,
-            description: it.Description || it.description || it.taskDescription,
-            createdBy: it.CreatedBy || it.createdBy,
-            assignedTo: it.AssignedTo || it.assignedTo || [],
-            fileKey: it.FileKey || it.fileKey || null,
-            fileUrl: it.FileUrl || it.fileUrl || null,
-            createdAt: it.CreatedAt || it.createdAt,
-          }));
-          // Prefer backend list (authoritative)
-          tasks = backend;
-        }
-      } catch (err) {
-        // Log details for 403s and other errors
-        if (err.response && err.response.status === 403) {
-          console.warn('AWS API returned 403 when fetching tasks - check API token/permissions');
-        } else {
-          console.warn('Failed to fetch tasks from AWS API:', err.message);
-        }
-        // fall back to local tasks array
+    // If there's a backend API configured and token is available, try to fetch authoritative tasks
+    if (AWS_API_URL && req.session.user?.token) {
+      const backendTasks = await fetchTasksFromBackend(req.session.user.token);
+      if (backendTasks && backendTasks.length > 0) {
+        // Prefer backend list (authoritative)
+        tasks = backendTasks;
       }
     }
 
@@ -270,7 +341,7 @@ router.get("/view-tasks", async (req, res) => {
             const signed = await s3.getSignedUrlPromise("getObject", {
               Bucket: S3_BUCKET,
               Key: t.fileKey,
-              Expires: 60,
+              Expires: 3600, // 1 hour for view page
             });
             return { ...t, downloadUrl: signed };
           } catch (err) {
@@ -310,7 +381,7 @@ router.get("/view-tasks", async (req, res) => {
   }
 });
 
-// NEW: Download file endpoint - generates fresh download URLs
+// NEW: Download file endpoint - generates fresh download URLs and redirects
 router.get("/download-file/:taskId", async (req, res) => {
   if (!req.session.user) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -319,40 +390,14 @@ router.get("/download-file/:taskId", async (req, res) => {
   try {
     const taskId = req.params.taskId;
     
-    // Fetch tasks to find the specific task
-    let tasks = await getTasks();
-    
-    // If there's a backend API configured, try to fetch authoritative tasks
-    if (AWS_API_URL) {
-      try {
-        const resp = await axios.get(`${AWS_API_URL}/tasks`, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
-        });
-        if (resp.data && Array.isArray(resp.data.tasks)) {
-          const backend = resp.data.tasks.map((it) => ({
-            id: it.TaskID || it.id || it.taskId,
-            name: it.Name || it.name || it.taskName,
-            description: it.Description || it.description || it.taskDescription,
-            createdBy: it.CreatedBy || it.createdBy,
-            assignedTo: it.AssignedTo || it.assignedTo || [],
-            fileKey: it.FileKey || it.fileKey || null,
-            fileUrl: it.FileUrl || it.fileUrl || null,
-            createdAt: it.CreatedAt || it.createdAt,
-          }));
-          tasks = backend;
-        }
-      } catch (err) {
-        console.warn('Failed to fetch tasks from AWS API for download:', err.message);
-      }
-    }
-
-    const task = tasks.find((t) => t.id === taskId);
+    // Get task from any available source
+    const task = await getTaskById(taskId, req.session.user?.token);
     
     if (!task) {
       return res.status(404).json({ error: "Task not found" });
     }
 
-  // Check if user has permission to download (either creator or assigned)
+    // Check if user has permission to download (either creator or assigned)
     const uid = req.session.user?.userId || req.session.user?.userID || null;
     const hasPermission = task.createdBy && String(task.createdBy) === String(uid) ||
                          (task.assignedTo || []).some((a) => String(a) === String(uid));
@@ -379,16 +424,23 @@ router.get("/download-file/:taskId", async (req, res) => {
           const idx = parseInt(fileIndex || '0', 10);
           const fk = comment.FileKeys[idx];
           if (!fk) return res.status(404).json({ error: 'File not found in comment' });
-          const signed = await generateFreshDownloadUrl(fk);
-          if (!signed) return res.status(500).json({ error: 'Failed to generate download link' });
-          return res.json({ downloadUrl: signed, fileName: comment.FileNames && comment.FileNames[idx] ? comment.FileNames[idx] : (fk.split('/').pop() || 'attachment') });
+          
+          const fileName = comment.FileNames && comment.FileNames[idx] ? 
+            comment.FileNames[idx] : (fk.split('/').pop() || 'attachment');
+          
+          const downloadUrl = await generateFreshDownloadUrl(fk);
+          if (!downloadUrl) return res.status(500).json({ error: 'Failed to generate download link' });
+          
+          return res.json({ downloadUrl: downloadUrl, fileName: fileName });
         }
 
         // Legacy single FileKey
         if (comment.FileKey) {
-          const signed = await generateFreshDownloadUrl(comment.FileKey);
-          if (!signed) return res.status(500).json({ error: 'Failed to generate download link' });
-          return res.json({ downloadUrl: signed, fileName: comment.FileName || comment.FileKey.split('/').pop() || 'attachment' });
+          const fileName = comment.FileName || comment.FileKey.split('/').pop() || 'attachment';
+          const downloadUrl = await generateFreshDownloadUrl(comment.FileKey);
+          if (!downloadUrl) return res.status(500).json({ error: 'Failed to generate download link' });
+          
+          return res.json({ downloadUrl: downloadUrl, fileName: fileName });
         }
 
         return res.status(404).json({ error: 'No file attached to comment' });
@@ -420,40 +472,44 @@ router.get("/download-file/:taskId", async (req, res) => {
   }
 });
 
+// Direct download endpoint for files page
+router.get("/download/:fileKey", async (req, res) => {
+  if (!req.session.user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const fileKey = req.params.fileKey;
+    
+    if (!fileKey) {
+      return res.status(400).json({ error: "File key required" });
+    }
+
+    // Generate fresh download URL
+    const downloadUrl = await generateFreshDownloadUrl(fileKey);
+    
+    if (!downloadUrl) {
+      return res.status(500).json({ error: "Failed to generate download link" });
+    }
+
+    res.json({ 
+      downloadUrl: downloadUrl,
+      fileName: fileKey.split('/').pop() || 'download'
+    });
+  } catch (error) {
+    console.error('Direct download error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Task detail page with comments
 router.get("/task/:taskId", async (req, res) => {
   if (!req.session.user) return res.redirect("/login");
 
   const taskId = req.params.taskId;
   
-  // Fetch tasks from both local store and backend API
-  let tasks = await getTasks();
-  
-  // If there's a backend API configured, try to fetch authoritative tasks
-  if (AWS_API_URL) {
-    try {
-      const resp = await axios.get(`${AWS_API_URL}/tasks`, {
-        headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
-      });
-      if (resp.data && Array.isArray(resp.data.tasks)) {
-        const backend = resp.data.tasks.map((it) => ({
-          id: it.TaskID || it.id || it.taskId,
-          name: it.Name || it.name || it.taskName,
-          description: it.Description || it.description || it.taskDescription,
-          createdBy: it.CreatedBy || it.createdBy,
-          assignedTo: it.AssignedTo || it.assignedTo || [],
-          fileKey: it.FileKey || it.fileKey || null,
-          fileUrl: it.FileUrl || it.fileUrl || null,
-          createdAt: it.CreatedAt || it.createdAt,
-        }));
-        tasks = backend;
-      }
-    } catch (err) {
-      console.warn('Failed to fetch tasks from AWS API for task detail:', err.message);
-    }
-  }
-
-  let task = tasks.find((t) => t.id === taskId);
+  // Get task from any available source
+  const task = await getTaskById(taskId, req.session.user?.token);
 
   if (!task) {
     return res
@@ -481,7 +537,7 @@ router.get("/task/:taskId", async (req, res) => {
       const signedUrl = await s3.getSignedUrlPromise("getObject", {
         Bucket: S3_BUCKET,
         Key: task.fileKey,
-        Expires: 60,
+        Expires: 3600, // 1 hour for task detail page
       });
       task.downloadUrl = signedUrl;
     } catch (err) {
@@ -526,7 +582,7 @@ router.get("/task/:taskId", async (req, res) => {
                 return await s3.getSignedUrlPromise("getObject", {
                   Bucket: S3_BUCKET,
                   Key: fk,
-                  Expires: 60,
+                  Expires: 3600, // 1 hour for comment attachments
                 });
               } catch (err) {
                 console.warn('Failed to sign comment file', fk, err.message || err);
@@ -543,7 +599,7 @@ router.get("/task/:taskId", async (req, res) => {
             const signedUrl = await s3.getSignedUrlPromise("getObject", {
               Bucket: S3_BUCKET,
               Key: comment.FileKey,
-              Expires: 60,
+              Expires: 3600, // 1 hour for comment attachments
             });
             return { ...comment, FileUrl: signedUrl };
           } catch (err) {
@@ -585,32 +641,8 @@ router.get("/task/:taskId/files", async (req, res) => {
 
   const taskId = req.params.taskId;
   
-  // Fetch tasks to get task details
-  let tasks = await getTasks();
-  if (AWS_API_URL) {
-    try {
-      const resp = await axios.get(`${AWS_API_URL}/tasks`, {
-        headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
-      });
-      if (resp.data && Array.isArray(resp.data.tasks)) {
-        const backend = resp.data.tasks.map((it) => ({
-          id: it.TaskID || it.id || it.taskId,
-          name: it.Name || it.name || it.taskName,
-          description: it.Description || it.description || it.taskDescription,
-          createdBy: it.CreatedBy || it.createdBy,
-          assignedTo: it.AssignedTo || it.assignedTo || [],
-          fileKey: it.FileKey || it.fileKey || null,
-          fileUrl: it.FileUrl || it.fileUrl || null,
-          createdAt: it.CreatedAt || it.createdAt,
-        }));
-        tasks = backend;
-      }
-    } catch (err) {
-      console.warn('Failed to fetch tasks from AWS API for files page:', err.message);
-    }
-  }
-
-  let task = tasks.find((t) => t.id === taskId);
+  // Get task from any available source
+  const task = await getTaskById(taskId, req.session.user?.token);
 
   if (!task) {
     return res
@@ -645,7 +677,7 @@ router.get("/task/:taskId/files", async (req, res) => {
 
   // Add task file if exists
   if (task.fileKey) {
-    let downloadUrl = await generateFreshDownloadUrl(task.fileKey);
+    const downloadUrl = `/download/${encodeURIComponent(task.fileKey)}`;
 
     files.push({
       name: task.fileKey.split('/').pop() || 'Task File',
@@ -653,6 +685,7 @@ router.get("/task/:taskId/files", async (req, res) => {
       uploadedBy: userMap[task.createdBy] || task.createdBy,
       uploadedAt: task.createdAt,
       downloadUrl: downloadUrl,
+      fileKey: task.fileKey,
       size: 'Unknown'
     });
   }
@@ -662,7 +695,7 @@ router.get("/task/:taskId/files", async (req, res) => {
     if (comment.FileKeys && Array.isArray(comment.FileKeys)) {
       for (let i = 0; i < comment.FileKeys.length; i++) {
         const fk = comment.FileKeys[i];
-        let downloadUrl = await generateFreshDownloadUrl(fk);
+        const downloadUrl = `/download/${encodeURIComponent(fk)}`;
         const name = (comment.FileNames && comment.FileNames[i]) || (fk && fk.split('/').pop()) || 'Attachment';
         files.push({
           name: name,
@@ -678,7 +711,7 @@ router.get("/task/:taskId/files", async (req, res) => {
         });
       }
     } else if (comment.FileKey) {
-      let downloadUrl = await generateFreshDownloadUrl(comment.FileKey);
+      const downloadUrl = `/download/${encodeURIComponent(comment.FileKey)}`;
 
       files.push({
         name: comment.FileKey.split('/').pop() || 'Attachment',
@@ -717,58 +750,15 @@ router.get('/edit-task/:taskId', async (req, res) => {
 
   const taskId = req.params.taskId;
   try {
-    // reuse logic used in /view-tasks to obtain authoritative list
-    let tasks = await getTasks();
-    if (AWS_API_URL) {
-      try {
-        const resp = await axios.get(`${AWS_API_URL}/tasks`, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
-        });
-        if (resp.data && Array.isArray(resp.data.tasks)) {
-          const backend = resp.data.tasks.map((it) => ({
-            id: it.TaskID || it.id || it.taskId,
-            name: it.Name || it.name || it.taskName,
-            description: it.Description || it.description || it.taskDescription,
-            createdBy: it.CreatedBy || it.createdBy,
-            assignedTo: it.AssignedTo || it.assignedTo || [],
-            fileKey: it.FileKey || it.fileKey || null,
-            fileUrl: it.FileUrl || it.fileUrl || null,
-            createdAt: it.CreatedAt || it.createdAt,
-          }));
-          tasks = backend;
-        }
-      } catch (err) {
-        console.warn('Failed to fetch tasks from AWS API for edit page:', err.message);
-      }
-    }
-
-    let task = tasks.find(t => t.id === taskId);
-
-    // If not found in local/backend list, try direct DynamoDB lookup as a fallback
-    if (!task && dynamodb) {
-      const TASKS_TABLE = process.env.TASKS_TABLE || 'TasksTable';
-      try {
-        const getResp = await dynamodb.get({ TableName: TASKS_TABLE, Key: { TaskID: taskId } }).promise();
-        if (getResp && getResp.Item) {
-          const it = getResp.Item;
-          task = {
-            id: it.TaskID,
-            name: it.Name,
-            description: it.Description,
-            createdBy: it.CreatedBy,
-            assignedTo: it.AssignedTo || [],
-            fileKey: it.FileKey || null,
-            fileUrl: it.FileUrl || null,
-            createdAt: it.CreatedAt || new Date().toISOString(),
-          };
-        }
-      } catch (err) {
-        console.warn('DynamoDB lookup for task failed:', err.message || err);
-      }
-    }
+    // Get task from any available source
+    const task = await getTaskById(taskId, req.session.user?.token);
 
     if (!task) {
-      return res.status(404).render('error', { title: 'Not Found', message: 'Task not found', user: req.session.user || null });
+      return res.status(404).render('error', { 
+        title: 'Not Found', 
+        message: 'Task not found', 
+        user: req.session.user || null 
+      });
     }
 
     // Map assigned IDs to usernames if possible
@@ -785,7 +775,11 @@ router.get('/edit-task/:taskId', async (req, res) => {
     });
   } catch (err) {
     console.error('Error loading edit page:', err);
-    res.status(500).render('error', { title: 'Error', message: 'Could not load edit page', user: req.session.user || null });
+    res.status(500).render('error', { 
+      title: 'Error', 
+      message: 'Could not load edit page', 
+      user: req.session.user || null 
+    });
   }
 });
 
@@ -801,32 +795,8 @@ router.post('/update-task/:taskId', async (req, res) => {
   }
 
   try {
-    // fetch existing task to preserve fields
-    let tasks = await getTasks();
-    if (AWS_API_URL) {
-      try {
-        const resp = await axios.get(`${AWS_API_URL}/tasks`, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
-        });
-        if (resp.data && Array.isArray(resp.data.tasks)) {
-          const backend = resp.data.tasks.map((it) => ({
-            id: it.TaskID || it.id || it.taskId,
-            name: it.Name || it.name || it.taskName,
-            description: it.Description || it.description || it.taskDescription,
-            createdBy: it.CreatedBy || it.createdBy,
-            assignedTo: it.AssignedTo || it.assignedTo || [],
-            fileKey: it.FileKey || it.fileKey || null,
-            fileUrl: it.FileUrl || it.fileUrl || null,
-            createdAt: it.CreatedAt || it.createdAt,
-          }));
-          tasks = backend;
-        }
-      } catch (err) {
-        console.warn('Failed to fetch tasks from AWS API for update:', err.message);
-      }
-    }
-
-    const existing = tasks.find(t => t.id === taskId) || {};
+    // Get existing task from any available source
+    const existing = await getTaskById(taskId, req.session.user?.token) || {};
 
     // Build updated item for DynamoDB TasksTable
     const TASKS_TABLE = process.env.TASKS_TABLE || 'TasksTable';
@@ -867,7 +837,7 @@ router.post('/update-task/:taskId', async (req, res) => {
     }
 
     // Optionally forward update to backend API as upsert
-    if (AWS_API_URL) {
+    if (AWS_API_URL && req.session.user?.token) {
       try {
         const payload = {
           TaskID: updatedItem.TaskID,
@@ -880,7 +850,8 @@ router.post('/update-task/:taskId', async (req, res) => {
           CreatedAt: updatedItem.CreatedAt,
         };
         await axios.post(`${AWS_API_URL}/tasks`, payload, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+          headers: { Authorization: `Bearer ${req.session.user.token}` },
+          timeout: 10000
         });
       } catch (err) {
         console.warn('Failed to forward updated task to AWS API:', err.message || err);
@@ -953,14 +924,15 @@ router.get("/search-users", async (req, res) => {
 
   // search query received
 
-  if (AWS_API_URL) {
+  if (AWS_API_URL && req.session.user?.token) {
     try {
       let users = [];
       
       // Always try to get all users first from the /users endpoint
       try {
         const allUsersResp = await axios.get(`${AWS_API_URL}/users`, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ""}` },
+          headers: { Authorization: `Bearer ${req.session.user.token}` },
+          timeout: 5000
         });
         if (allUsersResp.data && allUsersResp.data.users) {
           users = allUsersResp.data.users;
@@ -969,7 +941,8 @@ router.get("/search-users", async (req, res) => {
         console.warn('Failed to get all users from API, trying search endpoint:', err.message);
         // If /users endpoint fails, try the search endpoint
         const searchResp = await axios.get(`${AWS_API_URL}/users/search?q=${encodeURIComponent(q)}`, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ""}` },
+          headers: { Authorization: `Bearer ${req.session.user.token}` },
+          timeout: 5000
         });
         if (searchResp.data && searchResp.data.users) {
           users = searchResp.data.users;
@@ -984,15 +957,15 @@ router.get("/search-users", async (req, res) => {
         );
       }
 
-  return res.json({ users });
+      return res.json({ users });
     } catch (err) {
-  console.warn("User search via API failed:", err.message);
-  // Fallback to dummy data
-  return getDummyUsers(q, res);
+      console.warn("User search via API failed:", err.message);
+      // Fallback to dummy data
+      return getDummyUsers(q, res);
     }
   }
 
-  // Fallback to dummy data if no AWS_API_URL
+  // Fallback to dummy data if no AWS_API_URL or token
   getDummyUsers(q, res);
 });
 
@@ -1054,86 +1027,13 @@ router.get("/presign-upload", async (req, res) => {
   }
 });
 
-// Presign download URL (GET) if you need to expose temporary download links
-router.get("/presign-download", async (req, res) => {
-  const devBypass =
-    process.env.NODE_ENV === "development" ||
-    process.env.DEV_ALLOW_PRESIGN === "true";
-  if (!(req.session.user || devBypass))
-    return res.status(401).json({ error: "Unauthorized" });
-  const key = req.query.key;
-  if (!key) return res.status(400).json({ error: "key required" });
-  try {
-    // creating presigned download URL
-    const url = await s3.getSignedUrlPromise("getObject", {
-      Bucket: S3_BUCKET,
-      Key: key,
-      Expires: 60,
-    });
-    return res.json({ url });
-  } catch (err) {
-    console.error("Error creating presigned download URL", err);
-    return res
-      .status(500)
-      .json({ error: "Could not create presigned download URL" });
-  }
-});
-
 // DELETE /delete-task/:taskId
 router.delete('/delete-task/:taskId', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ error: 'Unauthorized' });
   const taskId = req.params.taskId;
   try {
-    // 1) Resolve the task record (local store -> backend API -> DynamoDB)
-    let tasks = await getTasks();
-    if (AWS_API_URL) {
-      try {
-        const resp = await axios.get(`${AWS_API_URL}/tasks`, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
-        });
-        if (resp.data && Array.isArray(resp.data.tasks)) {
-          const backend = resp.data.tasks.map((it) => ({
-            id: it.TaskID || it.id || it.taskId,
-            name: it.Name || it.name || it.taskName,
-            description: it.Description || it.description || it.taskDescription,
-            createdBy: it.CreatedBy || it.createdBy,
-            assignedTo: it.AssignedTo || it.assignedTo || [],
-            fileKey: it.FileKey || it.fileKey || null,
-            fileUrl: it.FileUrl || it.fileUrl || null,
-            createdAt: it.CreatedAt || it.createdAt,
-          }));
-          tasks = backend;
-        }
-      } catch (err) {
-        console.warn('Failed to fetch tasks from AWS API for delete:', err.message);
-      }
-    }
-
-    let task = tasks.find(t => t.id === taskId);
-
-    // fallback to DynamoDB get
-    const TASKS_TABLE = process.env.TASKS_TABLE || 'TasksTable';
-    const COMMENTS_TABLE = process.env.COMMENTS_TABLE || 'CommentsTable';
-    if (!task && dynamodb) {
-      try {
-        const getResp = await dynamodb.get({ TableName: TASKS_TABLE, Key: { TaskID: taskId } }).promise();
-        if (getResp && getResp.Item) {
-          const it = getResp.Item;
-          task = {
-            id: it.TaskID,
-            name: it.Name,
-            description: it.Description,
-            createdBy: it.CreatedBy,
-            assignedTo: it.AssignedTo || [],
-            fileKey: it.FileKey || null,
-            fileUrl: it.FileUrl || null,
-            createdAt: it.CreatedAt || new Date().toISOString(),
-          };
-        }
-      } catch (err) {
-        console.warn('DynamoDB lookup for task failed during delete:', err.message || err);
-      }
-    }
+    // 1) Resolve the task record
+    const task = await getTaskById(taskId, req.session.user?.token);
 
     if (!task) {
       // If task cannot be found, treat as not found
@@ -1149,7 +1049,7 @@ router.delete('/delete-task/:taskId', async (req, res) => {
     try {
       if (dynamodb) {
         const commentsResult = await dynamodb.scan({
-          TableName: COMMENTS_TABLE,
+          TableName: "CommentsTable",
           FilterExpression: 'TaskID = :taskId',
           ExpressionAttributeValues: { ':taskId': taskId }
         }).promise();
@@ -1203,7 +1103,7 @@ router.delete('/delete-task/:taskId', async (req, res) => {
         }
         for (const batch of batches) {
           const reqItems = {};
-          reqItems[COMMENTS_TABLE] = batch.map(id => ({ DeleteRequest: { Key: { CommentID: id } } }));
+          reqItems["CommentsTable"] = batch.map(id => ({ DeleteRequest: { Key: { CommentID: id } } }));
           await dynamodb.batchWrite({ RequestItems: reqItems }).promise();
         }
       } catch (err) {
@@ -1217,7 +1117,7 @@ router.delete('/delete-task/:taskId', async (req, res) => {
     // 5) Delete task item from TasksTable or in-memory
     try {
       if (dynamodb && process.env.TASKS_TABLE) {
-        await dynamodb.delete({ TableName: TASKS_TABLE, Key: { TaskID: taskId } }).promise();
+        await dynamodb.delete({ TableName: process.env.TASKS_TABLE, Key: { TaskID: taskId } }).promise();
       } else {
         // Fallback: remove from in-memory tasks array returned by getTasks()
         const inMem = await getTasks();
@@ -1229,10 +1129,11 @@ router.delete('/delete-task/:taskId', async (req, res) => {
     }
 
     // 6) Optionally inform backend API about deletion
-    if (AWS_API_URL) {
+    if (AWS_API_URL && req.session.user?.token) {
       try {
         await axios.delete(`${AWS_API_URL}/tasks/${encodeURIComponent(taskId)}`, {
-          headers: { Authorization: `Bearer ${req.session.user?.token || ''}` },
+          headers: { Authorization: `Bearer ${req.session.user.token}` },
+          timeout: 10000
         });
       } catch (err) {
         // non-fatal
